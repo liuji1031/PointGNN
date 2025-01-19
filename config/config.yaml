@@ -1,0 +1,60 @@
+VoxelDownsample:
+  xrange: [-40.0, 40.0]
+  yrange: [-40.0, 40.0]
+  zrange: [-1.0,3.0]
+  voxel_size:
+    x: 0.2
+    y: 0.2
+    z: 0.2
+
+GNNLayers:
+  - name: GNN_layer_1
+    mlp_h:
+      dim_lst: [64, 64]
+      activation: relu
+      output_activation: none
+    mlp_f:
+      feat_dim: 32
+      hidden_dim_lst: [32, 32]
+      activation: relu
+      output_activation: none
+    mlp_g:
+      dim_lst: [64, 64]
+      activation: relu
+      output_activation: none
+  - name: GNN_layer_2
+    mlp_h:
+      dim_lst: [64, 64]
+      activation: relu
+      output_activation: none
+    mlp_f:
+      feat_dim: 32
+      hidden_dim_lst: [32, 32]
+      activation: relu
+      output_activation: none
+    mlp_g:
+      dim_lst: [64, 64]
+      activation: relu
+      output_activation: none
+
+ClassificationHead:
+  mlp:
+    dim_lst: [64, 64, 3] # 3 classes, vehicle and human and background
+    activation: relu
+    output_activation: none
+
+LocalizationHead: # regress bounding boxes, one head for each foreground class
+  - vehicles:
+      mlp:
+        dim_lst: [64, 64, 7] # 7 delta values for x, y, z, l, w, h, theta
+        activation: relu
+        output_activation: none
+  - human:
+      mlp:
+        dim_lst: [64, 64, 7] # 7 delta values for x, y, z, l, w, h, theta
+        activation: relu
+        output_activation: none
+
+nuscenes:
+  num_classes: 3
+
