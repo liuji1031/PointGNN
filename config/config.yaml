@@ -1,7 +1,7 @@
 VoxelDownsample:
-  xrange: [-40.0, 40.0]
-  yrange: [-40.0, 40.0]
-  zrange: [-1.0,3.0]
+  x_range: [-40.0, 40.0]
+  y_range: [-40.0, 40.0]
+  z_range: [-1.0,3.0]
   voxel_size:
     x: 0.2
     y: 0.2
@@ -55,6 +55,24 @@ LocalizationHead: # regress bounding boxes, one head for each foreground class
         activation: relu
         output_activation: none
 
-nuscenes:
-  num_classes: 3
+Dataset:
+  nuscenes:
+    filepath: /home/ji-liu/Robotics/NuScenes/NuScenes_mini
+    version: v1.0-mini
+    num_classes: 6
 
+AnchorBox:
+  - class: vehicle.car
+    wlh: [1.9,4.6,1.7]
+  - class: vehicle.truck
+    wlh: [2.4,6.5,2.6]
+  - class: vehicle.bus
+    wlh: [2.9,10.0,3.5]
+  - class: vehicle.construction
+    wlh: [2.6,5.6,2.4]
+  - class: vehicle.bicycle
+    wlh: [0.6,1.8,1.4]
+  - class: vehicle.motorcycle
+    wlh: [0.68, 1.95, 1.47]
+  - class: vehicle.trailer
+    wlh: [2.3,10.0,3.7]
