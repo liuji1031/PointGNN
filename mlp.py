@@ -2,7 +2,6 @@ import typing
 import torch
 from torch.nn import Linear
 
-from torch_geometric.nn import PointGNNConv
 from config.activations import activation_dict
 
 class Mlp(torch.nn.Module):
@@ -11,10 +10,11 @@ class Mlp(torch.nn.Module):
     Args:
         torch (_type_): _description_
     """
-    def __init__(self, 
+    def __init__(self,
                  dim_lst : typing.List[int],
                  activation : str = "relu",
-                 output_activation : str = "none"):
+                 output_activation : str = "none",
+                 add_batch_norm : bool = False):
         """_summary_
 
         Args:
@@ -24,6 +24,7 @@ class Mlp(torch.nn.Module):
             layers. defaults to "relu".
             output_activation (str, optional): activation function of the output
             layer. defaults to "none". 
+            add_batch_norm (bool, optional): whether to add batch normalization
         """
         super().__init__()
         layers = []
@@ -35,6 +36,9 @@ class Mlp(torch.nn.Module):
             else:
                 if output_activation != "none":
                     layers.append(activation_dict[output_activation]())
+            
+            if add_batch_norm:
+                layers.append(torch.nn.BatchNorm1d(dim_lst[i+1]))
 
         self.mlp = torch.nn.Sequential(*layers)
     
