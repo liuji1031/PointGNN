@@ -2,6 +2,7 @@ import os
 import numpy as np
 import matplotlib.pyplot as plt
 from typing import List, Tuple, Union
+import torch
 import torch.utils.data as data
 from pyquaternion import Quaternion
 from bbox import BoundingBox3D
@@ -24,9 +25,24 @@ class NuScenesDataset(data.Dataset):
         self.sample_tokens_by_scene = self._get_sample_tokens_by_scene()
         self.train_tokens, self.val_tokens, self.test_tokens = \
             self._split_train_val_test(train_val_test_split, seed)
+        
         self.anchor_boxes, self.category_list = self._gen_anchor_boxes(anchor_box_config)
-        self.category_list = ["background"] + self.category_list # add background class
+        # build a dictionary for category and sub-category. example output:
+        # {"vehicle": ["car", "truck", "bus"]}
         self.category_dict = self._parse_category()
+
+        # store anchor box information into a torch array
+        if len(self.anchor_boxes):
+            self.anchor_boxes_tensor = []
+            for box in self.anchor_boxes:
+                box:BoundingBox3D
+                self.anchor_boxes_tensor.append(box.to_tensor())
+            self.anchor_boxes_tensor = torch.stack(self.anchor_boxes_tensor,dim=0) # n_anchor_box x 7
+            self.anchor_boxes_tensor.requires_grad = False
+        
+        # get an average size of the anchor boxes
+        self.avg_anchor_box = self._get_average_anchor_box()
+        self.avg_anchor_box_np = self.avg_anchor_box.to_numpy()
 
     def __len__(self):
         return len(self.scenes)
@@ -91,6 +107,18 @@ class NuScenesDataset(data.Dataset):
             anchor_boxes.append(bbox)
             category_list.append(config["class"])
         return anchor_boxes, category_list
+    
+    def _get_average_anchor_box(self):
+        """Get the average of anchor boxes."""
+        avg_box = BoundingBox3D(0,0,0,0,0,0,0)
+        for box in self.anchor_boxes:
+            avg_box.l += box.l
+            avg_box.w += box.w
+            avg_box.h += box.h
+        avg_box.l /= len(self.anchor_boxes)
+        avg_box.w /= len(self.anchor_boxes)
+        avg_box.h /= len(self.anchor_boxes)
+        return avg_box
 
     def _get_sample_tokens_by_scene(self) -> List[List[str]]:
         """Return all sample tokens in the dataset.
@@ -192,9 +220,12 @@ class NuScenesDataset(data.Dataset):
             if in_category:
                 gt_box = BoundingBox3D.from_nuscene_box(boxes[k])
                 gt_box.name = category_name
+
+                # also figure out the label, i.e., index of the category
+                # within the category list
                 gt_box.label = self.category_list.index(category_name)
-                # also figure out the label
                 gt_boxes.append(gt_box)
+
                 if render:
                     print(f"======{k}======")
                     self.nusc.render_annotation(ann_token)
@@ -270,8 +301,32 @@ class NuScenesDataset(data.Dataset):
 
         return pc
     
+    def _encode_loc_reg_target(self, reg_target:np.ndarray, gt_box:BoundingBox3D, points:LidarPointCloud, mask:np.ndarray):
+        """Encode the regression target for localization.
+
+        Given a point cloud, and a mask that indicates the points within the ground 
+        truth box, encode the regression target and stores them in reg_target
+
+        Args:
+            reg_target (np.ndarray): 2D array of regression targets
+            gt_box (BoundingBox3D): ground truth box
+            points (LidarPointCloud): point cloud
+            mask (np.ndarray): mask that indicates the points within the ground truth box
+        """
+        # x, y, z target
+        gt_box_xyz = np.array([gt_box.x, gt_box.y, gt_box.z])[np.newaxis,:]
+        reg_target[mask,:3] = (gt_box_xyz - points.points[:3,mask].T)/self.avg_anchor_box_np[[0],:3]
+
+        # l, w, h target
+        reg_target[mask,3] = np.log(gt_box.l/self.avg_anchor_box.l)
+        reg_target[mask,4] = np.log(gt_box.w/self.avg_anchor_box.w)
+        reg_target[mask,5] = np.log(gt_box.h/self.avg_anchor_box.h)
+
+        # rotation target, scaled to [-1,1]
+        reg_target[mask,6] = np.arctan2(np.sin(gt_box.r), np.cos(gt_box.r))/np.pi
+
     def _label_points(self, gt_boxes:List[BoundingBox3D], points:LidarPointCloud):
-        """label the points with the ground truth boxes
+        """Label the points with the ground truth boxes.
 
         Args:
             gt_boxes (List[BoundingBox3D]): list of ground truth boxes
@@ -280,9 +335,46 @@ class NuScenesDataset(data.Dataset):
             np.ndarray: 1D array of labels
         """
         n = points.nbr_points()
-        labels = np.zeros(n, dtype=int)
+        labels = -1*np.ones(n)
+        loc_regression_target = np.zeros((n,3), dtype=np.float32)
         for gt_box in gt_boxes:
             mask = gt_box.within_gt_box(points.points[:3,:].T)
             # the points within the gt box are labeled with the label of the gt box
             labels[mask] = gt_box.label
+            anchor_box : BoundingBox3D = self.anchor_boxes[gt_box.label]
+            # compute localization regression target for each point within the gt box
+            loc_regression_target[mask,0] = (gt_box.x - points.points[0,mask])/anchor_box.l
+            loc_regression_target[mask,1] = (gt_box.y - points.points[1,mask])/anchor_box.w
+            loc_regression_target[mask,2] = (gt_box.z - points.points[2,mask])/anchor_box.h
+
         return labels
+    
+    def _compute_loc_regression_target(self,gt_boxes:List[BoundingBox3D], points:LidarPointCloud):
+        """Compute the location regression target.
+
+        Args:
+            gt_boxes (List[BoundingBox3D]): list of ground truth boxes with class labels
+            points (LidarPointCloud): lidar points
+
+        Returns:
+            np.ndarray: 2D array of location regression targets
+        """
+        point_labels = self._label_points(gt_boxes, points)
+        label_unique = np.unique(point_labels)
+
+        for label in label_unique:
+            if label == -1:
+                continue
+            mask = point_labels == label
+            points_in_box = points.points[:3,:].T[mask]
+            for gt_box in gt_boxes:
+                if gt_box.label == label:
+                    loc_reg_target = gt_box.loc_reg_target(points_in_box)
+                    break
+
+        n = points.nbr_points()
+        loc_reg_targets = np.zeros((n,3), dtype=np.float32)
+        for gt_box in gt_boxes:
+            mask = gt_box.within_gt_box(points.points[:3,:].T)
+            loc_reg_targets[mask] = gt_box.loc_reg_target(points.points[:3,:].T[mask])
+        return loc_reg_targets
