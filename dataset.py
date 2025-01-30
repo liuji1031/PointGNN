@@ -378,3 +378,59 @@ class NuScenesDataset(data.Dataset):
             mask = gt_box.within_gt_box(points.points[:3,:].T)
             loc_reg_targets[mask] = gt_box.loc_reg_target(points.points[:3,:].T[mask])
         return loc_reg_targets
+    
+
+def encode_loc_reg_target(reg_target:np.ndarray,ref_box:BoundingBox3D,
+                          gt_box:BoundingBox3D, points:LidarPointCloud, mask:np.ndarray):
+    """Encode the regression target for localization.
+
+    Given a point cloud, and a mask that indicates the points within the ground 
+    truth box, encode the regression target and stores them in reg_target
+
+    Args:
+        reg_target (np.ndarray): 2D array of regression targets
+        ref_box (BoundingBox3D): reference box
+        gt_box (BoundingBox3D): ground truth box
+        points (LidarPointCloud): point cloud
+        mask (np.ndarray): mask that indicates the points within the ground truth box
+    """
+    # x, y, z target
+    gt_box_xyz = np.array([gt_box.x, gt_box.y, gt_box.z])[np.newaxis,:]
+    reg_target[mask,:3] = (gt_box_xyz - points.points[:3,mask].T)/ref_box.numpy[[0],:3]
+
+    # l, w, h target
+    reg_target[mask,3:6] = np.array([np.log(gt_box.l/ref_box.l),
+                                     np.log(gt_box.w/ref_box.w),
+                                     np.log(gt_box.h/ref_box.h)])[np.newaxis,:]
+
+    # rotation target, scaled to [-1,1]
+    reg_target[mask,6] = np.arctan2(np.sin(gt_box.r), np.cos(gt_box.r))/np.pi
+
+
+def decode_bbox(loc_output:torch.Tensor, ref_box:BoundingBox3D, points:LidarPointCloud):
+    """Decode the bounding box from the output of the network.
+
+    Args:
+        loc_output (torch.Tensor): output of the network. 2D tensor of shape N x 7
+        ref_box (BoundingBox3D): reference box (e.g, average anchor box)
+        points (LidarPointCloud): point cloud
+        mask (np.ndarray): mask that indicates the points within the bounding box
+
+    Returns:
+        Tensor : 2D tensor of bounding boxes
+    """
+    n = loc_output.shape[0]
+    bbox = torch.zeros((n,7),dtype=torch.float32)
+    point_xyz = torch.from_numpy(points.points[:3,:].T).to(torch.float32)
+
+    # xyz
+    bbox[:,:3] = loc_output[:,:3]*ref_box.tensor[[0],:3] + point_xyz
+
+    # lwh
+    bbox[:,3:6] = torch.exp(loc_output[:,3:6])*ref_box.tensor[[0],3:6]
+
+    # rotation
+    bbox[:,6] = loc_output[:,6]*np.pi
+
+    return bbox
+    
