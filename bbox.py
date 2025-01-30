@@ -6,6 +6,8 @@ from pyquaternion import Quaternion
 from shapely.geometry import Polygon
 from shapely.affinity import rotate, translate
 from nuscenes.utils.data_classes import Box
+import torch
+from einops import rearrange
 
 class BoundingBox3D(Box):
     """
@@ -82,7 +84,25 @@ class BoundingBox3D(Box):
 
     @property
     def r(self):
+        """Yaw angle of the bounding box."""
         return self.orientation.yaw_pitch_roll[0]
+    
+    def to_tensor(self):
+        """convert the bounding box to a tensor
+
+        Returns:
+            torch.Tensor: a 1x7 tensor representing the bounding box
+        """
+        return rearrange(torch.tensor([self.x, self.y, self.z, self.w, self.l, self.h, self.r]),
+                                    "c -> 1 c")
+
+    def to_numpy(self)->np.ndarray:
+        """convert the bounding box to a numpy array
+
+        Returns:
+            np.ndarray: a 1x7 numpy array representing the bounding box
+        """
+        return np.array([self.x, self.y, self.z, self.w, self.l, self.h, self.r])[:, np.newaxis]
 
     def find_gt_box_normals(self) -> typing.Tuple[np.ndarray, np.ndarray]:
         """
