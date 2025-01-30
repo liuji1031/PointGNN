@@ -31,6 +31,8 @@ class BoundingBox3D(Box):
                          orientation=Quaternion(axis=[0, 0, 1], angle=r))
         #create shapely polygon, for iou calculation
         self.polygon = self._get_2d_polgon()
+        self.numpy = self.to_numpy()
+        self.tensor = self.to_tensor()
     
     @classmethod
     def from_nuscene_box(cls, box:Box):
