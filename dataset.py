@@ -4,12 +4,12 @@ import matplotlib.pyplot as plt
 from typing import List, Tuple, Union
 import torch
 import torch.utils.data as data
-from einops import rearrange
 from pyquaternion import Quaternion
 from bbox import BoundingBox3D
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.data_classes import Box, LidarPointCloud
 from nuscenes.utils.geometry_utils import transform_matrix
+from dataset_util import encode_loc_reg_target, decode_bbox
 
 
 class NuScenesDataset(data.Dataset):
@@ -301,33 +301,9 @@ class NuScenesDataset(data.Dataset):
         pc.transform(sensor_ref_car)
 
         return pc
-    
-    def _encode_loc_reg_target(self, reg_target:np.ndarray, gt_box:BoundingBox3D, points:LidarPointCloud, mask:np.ndarray):
-        """Encode the regression target for localization.
 
-        Given a point cloud, and a mask that indicates the points within the ground 
-        truth box, encode the regression target and stores them in reg_target
-
-        Args:
-            reg_target (np.ndarray): 2D array of regression targets
-            gt_box (BoundingBox3D): ground truth box
-            points (LidarPointCloud): point cloud
-            mask (np.ndarray): mask that indicates the points within the ground truth box
-        """
-        # x, y, z target
-        gt_box_xyz = np.array([gt_box.x, gt_box.y, gt_box.z])[np.newaxis,:]
-        reg_target[mask,:3] = (gt_box_xyz - points.points[:3,mask].T)/self.avg_anchor_box_np[[0],:3]
-
-        # l, w, h target
-        reg_target[mask,3] = np.log(gt_box.l/self.avg_anchor_box.l)
-        reg_target[mask,4] = np.log(gt_box.w/self.avg_anchor_box.w)
-        reg_target[mask,5] = np.log(gt_box.h/self.avg_anchor_box.h)
-
-        # rotation target, scaled to [-1,1]
-        reg_target[mask,6] = np.arctan2(np.sin(gt_box.r), np.cos(gt_box.r))/np.pi
-
-    def _label_points(self, gt_boxes:List[BoundingBox3D], points:LidarPointCloud):
-        """Label the points with the ground truth boxes.
+    def _compute_loc_regression_target(self, gt_boxes:List[BoundingBox3D], points:LidarPointCloud):
+        """Compute the regression target for localization head.
 
         Args:
             gt_boxes (List[BoundingBox3D]): list of ground truth boxes
@@ -336,124 +312,23 @@ class NuScenesDataset(data.Dataset):
             np.ndarray: 1D array of labels
         """
         n = points.nbr_points()
-        labels = -1*np.ones(n)
         loc_regression_target = np.zeros((n,3), dtype=np.float32)
+        positive_mask = np.zeros(n, dtype=bool)
         for gt_box in gt_boxes:
             mask = gt_box.within_gt_box(points.points[:3,:].T)
-            # the points within the gt box are labeled with the label of the gt box
-            labels[mask] = gt_box.label
-            anchor_box : BoundingBox3D = self.anchor_boxes[gt_box.label]
+
             # compute localization regression target for each point within the gt box
-            loc_regression_target[mask,0] = (gt_box.x - points.points[0,mask])/anchor_box.l
-            loc_regression_target[mask,1] = (gt_box.y - points.points[1,mask])/anchor_box.w
-            loc_regression_target[mask,2] = (gt_box.z - points.points[2,mask])/anchor_box.h
+            encode_loc_reg_target(reg_target=loc_regression_target,
+                                  box_xyz=gt_box.xyz_np,
+                                  box_lhw=gt_box.lwh_np,
+                                  box_r=gt_box.r_np,
+                                  ref_box=self.avg_anchor_box,
+                                  points=points,
+                                  mask=mask)
 
-        return labels
-    
-    def _compute_loc_regression_target(self,gt_boxes:List[BoundingBox3D], points:LidarPointCloud):
-        """Compute the location regression target.
+            # add to the positive mask
+            positive_mask[mask] = True
 
-        Args:
-            gt_boxes (List[BoundingBox3D]): list of ground truth boxes with class labels
-            points (LidarPointCloud): lidar points
+        return loc_regression_target, positive_mask
 
-        Returns:
-            np.ndarray: 2D array of location regression targets
-        """
-        point_labels = self._label_points(gt_boxes, points)
-        label_unique = np.unique(point_labels)
-
-        for label in label_unique:
-            if label == -1:
-                continue
-            mask = point_labels == label
-            points_in_box = points.points[:3,:].T[mask]
-            for gt_box in gt_boxes:
-                if gt_box.label == label:
-                    loc_reg_target = gt_box.loc_reg_target(points_in_box)
-                    break
-
-        n = points.nbr_points()
-        loc_reg_targets = np.zeros((n,3), dtype=np.float32)
-        for gt_box in gt_boxes:
-            mask = gt_box.within_gt_box(points.points[:3,:].T)
-            loc_reg_targets[mask] = gt_box.loc_reg_target(points.points[:3,:].T[mask])
-        return loc_reg_targets
-
-
-def encode_loc_reg_target(reg_target:Union[np.ndarray,torch.Tensor],
-                          box_xyz:Union[np.ndarray,torch.Tensor],
-                          box_lhw:Union[np.ndarray,torch.Tensor],
-                          box_r:Union[np.ndarray,torch.Tensor],
-                          ref_box:BoundingBox3D,
-                          points:LidarPointCloud,
-                          mask:np.ndarray):
-    """Encode the regression target for localization.
-
-    Given a point cloud, and a mask that indicates the points within the ground 
-    truth box, encode the regression target and stores them in reg_target
-
-    Args:
-        reg_target (np.ndarray): 2D array of regression targets
-        ref_box (BoundingBox3D): reference box
-        gt_box (BoundingBox3D): ground truth box
-        points (LidarPointCloud): point cloud
-        mask (np.ndarray): mask that indicates the points within the ground truth box
-    """
-    # x, y, z target
-    if box_xyz.ndim == 1:
-        box_xyz = rearrange(box_xyz,'d -> 1 d')
-    if isinstance(box_xyz, torch.Tensor):
-        ref_box_xyz = ref_box.tensor[[0],:3]
-        points_xyz = torch.from_numpy(points.points[:3,:].T)
-    else:
-        ref_box_xyz = ref_box.numpy[[0],:3]
-        points_xyz = points.points[:3,:].T
-    reg_target[mask,:3] = (box_xyz - points_xyz)/ref_box_xyz
-
-    # l, w, h target
-    if box_lhw.ndim == 1:
-        box_lhw = rearrange(box_lhw,'d -> 1 d')
-    if isinstance(box_lhw, torch.Tensor):
-        ref_box_lhw = ref_box.tensor[[0],3:6]
-    else:
-        ref_box_lhw = ref_box.numpy[[0],3:6]
-    reg_target[mask,3:6] = np.log(box_lhw/ref_box_lhw)
-
-    # rotation target, scaled to [-1,1]
-    if box_r.ndim == 1:
-        box_r = rearrange(box_r,'d -> 1 d')
-    if isinstance(box_r, torch.Tensor):
-        atan2, sin, cos, pi = torch.atan2, torch.sin, torch.cos,torch.pi
-    else:
-        atan2, sin, cos, pi = np.arctan2, np.sin, np.cos, np.pi
-    reg_target[mask,6] = atan2(sin(box_r), cos(box_r))/pi
-
-
-def decode_bbox(loc_output:torch.Tensor, ref_box:BoundingBox3D, points:LidarPointCloud):
-    """Decode the bounding box from the output of the network.
-
-    Args:
-        loc_output (torch.Tensor): output of the network. 2D tensor of shape N x 7
-        ref_box (BoundingBox3D): reference box (e.g, average anchor box)
-        points (LidarPointCloud): point cloud
-        mask (np.ndarray): mask that indicates the points within the bounding box
-
-    Returns:
-        Tensor : 2D tensor of bounding boxes
-    """
-    n = loc_output.shape[0]
-    bbox = torch.zeros((n,7),dtype=torch.float32)
-    point_xyz = torch.from_numpy(points.points[:3,:].T)
-
-    # xyz
-    bbox[:,:3] = loc_output[:,:3]*ref_box.tensor[[0],:3] + point_xyz
-
-    # lwh
-    bbox[:,3:6] = torch.exp(loc_output[:,3:6])*ref_box.tensor[[0],3:6]
-
-    # rotation
-    bbox[:,6] = loc_output[:,6]*torch.pi
-
-    return bbox
     
