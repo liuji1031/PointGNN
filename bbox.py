@@ -94,7 +94,7 @@ class BoundingBox3D(Box):
         return self.numpy[[0],:3]
     
     @property
-    def wlh_np(self):
+    def lwh_np(self):
         return self.numpy[[0],3:6]
     
     @property
@@ -106,7 +106,7 @@ class BoundingBox3D(Box):
         return self.tensor[[0], :3]
     
     @property
-    def wlh_tensor(self):
+    def lwh_tensor(self):
         return self.tensor[[0], 3:6]
     
     @property
@@ -119,7 +119,7 @@ class BoundingBox3D(Box):
         Returns:
             torch.Tensor: a 1x7 tensor representing the bounding box
         """
-        return torch.tensor([self.x, self.y, self.z, self.w, self.l, self.h, self.r])[torch.newaxis, :]
+        return torch.tensor([self.x, self.y, self.z, self.l, self.w, self.h, self.r])[torch.newaxis, :]
 
     def to_numpy(self)->np.ndarray:
         """convert the bounding box to a numpy array
@@ -127,7 +127,7 @@ class BoundingBox3D(Box):
         Returns:
             np.ndarray: a 1x7 numpy array representing the bounding box
         """
-        return np.array([self.x, self.y, self.z, self.w, self.l, self.h, self.r])[np.newaxis, :]
+        return np.array([self.x, self.y, self.z, self.l, self.w, self.h, self.r])[np.newaxis, :]
 
     def find_gt_box_normals(self) -> typing.Tuple[np.ndarray, np.ndarray]:
         """
