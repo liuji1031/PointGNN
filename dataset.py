@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from typing import List, Tuple, Union
 import torch
 import torch.utils.data as data
+from einops import rearrange
 from pyquaternion import Quaternion
 from bbox import BoundingBox3D
 from nuscenes.nuscenes import NuScenes
@@ -378,10 +379,15 @@ class NuScenesDataset(data.Dataset):
             mask = gt_box.within_gt_box(points.points[:3,:].T)
             loc_reg_targets[mask] = gt_box.loc_reg_target(points.points[:3,:].T[mask])
         return loc_reg_targets
-    
 
-def encode_loc_reg_target(reg_target:np.ndarray,ref_box:BoundingBox3D,
-                          gt_box:BoundingBox3D, points:LidarPointCloud, mask:np.ndarray):
+
+def encode_loc_reg_target(reg_target:Union[np.ndarray,torch.Tensor],
+                          box_xyz:Union[np.ndarray,torch.Tensor],
+                          box_lhw:Union[np.ndarray,torch.Tensor],
+                          box_r:Union[np.ndarray,torch.Tensor],
+                          ref_box:BoundingBox3D,
+                          points:LidarPointCloud,
+                          mask:np.ndarray):
     """Encode the regression target for localization.
 
     Given a point cloud, and a mask that indicates the points within the ground 
@@ -395,16 +401,33 @@ def encode_loc_reg_target(reg_target:np.ndarray,ref_box:BoundingBox3D,
         mask (np.ndarray): mask that indicates the points within the ground truth box
     """
     # x, y, z target
-    gt_box_xyz = np.array([gt_box.x, gt_box.y, gt_box.z])[np.newaxis,:]
-    reg_target[mask,:3] = (gt_box_xyz - points.points[:3,mask].T)/ref_box.numpy[[0],:3]
+    if box_xyz.ndim == 1:
+        box_xyz = rearrange(box_xyz,'d -> 1 d')
+    if isinstance(box_xyz, torch.Tensor):
+        ref_box_xyz = ref_box.tensor[[0],:3]
+        points_xyz = torch.from_numpy(points.points[:3,:].T)
+    else:
+        ref_box_xyz = ref_box.numpy[[0],:3]
+        points_xyz = points.points[:3,:].T
+    reg_target[mask,:3] = (box_xyz - points_xyz)/ref_box_xyz
 
     # l, w, h target
-    reg_target[mask,3:6] = np.array([np.log(gt_box.l/ref_box.l),
-                                     np.log(gt_box.w/ref_box.w),
-                                     np.log(gt_box.h/ref_box.h)])[np.newaxis,:]
+    if box_lhw.ndim == 1:
+        box_lhw = rearrange(box_lhw,'d -> 1 d')
+    if isinstance(box_lhw, torch.Tensor):
+        ref_box_lhw = ref_box.tensor[[0],3:6]
+    else:
+        ref_box_lhw = ref_box.numpy[[0],3:6]
+    reg_target[mask,3:6] = np.log(box_lhw/ref_box_lhw)
 
     # rotation target, scaled to [-1,1]
-    reg_target[mask,6] = np.arctan2(np.sin(gt_box.r), np.cos(gt_box.r))/np.pi
+    if box_r.ndim == 1:
+        box_r = rearrange(box_r,'d -> 1 d')
+    if isinstance(box_r, torch.Tensor):
+        atan2, sin, cos, pi = torch.atan2, torch.sin, torch.cos,torch.pi
+    else:
+        atan2, sin, cos, pi = np.arctan2, np.sin, np.cos, np.pi
+    reg_target[mask,6] = atan2(sin(box_r), cos(box_r))/pi
 
 
 def decode_bbox(loc_output:torch.Tensor, ref_box:BoundingBox3D, points:LidarPointCloud):
@@ -421,7 +444,7 @@ def decode_bbox(loc_output:torch.Tensor, ref_box:BoundingBox3D, points:LidarPoin
     """
     n = loc_output.shape[0]
     bbox = torch.zeros((n,7),dtype=torch.float32)
-    point_xyz = torch.from_numpy(points.points[:3,:].T).to(torch.float32)
+    point_xyz = torch.from_numpy(points.points[:3,:].T)
 
     # xyz
     bbox[:,:3] = loc_output[:,:3]*ref_box.tensor[[0],:3] + point_xyz
@@ -430,7 +453,7 @@ def decode_bbox(loc_output:torch.Tensor, ref_box:BoundingBox3D, points:LidarPoin
     bbox[:,3:6] = torch.exp(loc_output[:,3:6])*ref_box.tensor[[0],3:6]
 
     # rotation
-    bbox[:,6] = loc_output[:,6]*np.pi
+    bbox[:,6] = loc_output[:,6]*torch.pi
 
     return bbox
     
