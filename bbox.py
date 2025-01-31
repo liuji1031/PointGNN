@@ -76,13 +76,25 @@ class BoundingBox3D(Box):
     def w(self):
         return self.wlh[0]
     
+    @w.setter
+    def w(self, value: float):
+        self.wlh[0] = value
+
     @property
     def l(self):
         return self.wlh[1]
+    
+    @l.setter
+    def l(self, value: float):
+        self.wlh[1] = value
 
     @property
     def h(self):
         return self.wlh[2]
+    
+    @h.setter
+    def h(self, value: float):
+        self.wlh[2] = value
 
     @property
     def r(self):
