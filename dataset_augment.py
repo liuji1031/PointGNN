@@ -1,18 +1,29 @@
+import re
 from abc import ABC, abstractmethod
 import numpy as np
 from nuscenes.utils.data_classes import LidarPointCloud
 
+def camel_to_snake(name):
+    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
+    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
+
+class AugmentRegistry(ABC):
+    REGISTRY = {}
+    def __init_subclass__(cls, **kwargs):
+        AugmentRegistry.REGISTRY[camel_to_snake(cls.__name__)] = cls
+        super().__init_subclass__(**kwargs)
+
 class AugmentPointCloud(ABC):
-
     @abstractmethod
-    def augment(self, pc:LidarPointCloud, *args, **kwargs):
+    def augment(self, pc:LidarPointCloud, **kwargs):
         pass
-
-class RandomJitter(AugmentPointCloud):
+    
+class RandomJitter(AugmentPointCloud, AugmentRegistry):
     def __init__(self, sigma:float=0.1):
         self.sigma = sigma
     
-    def augment(self, pc : LidarPointCloud, *args, **kwargs):
+    def augment(self, pc : LidarPointCloud, **kwargs):
+        assert 'sensor_loc' in kwargs
         sensor_loc = kwargs['sensor_loc']
         return self._random_jitter(pc, sensor_loc, self.sigma)
         
@@ -31,11 +42,11 @@ class RandomJitter(AugmentPointCloud):
         jitter = np.random.randn(*d.shape)*sigma # n x 1
         points.points[:3,:] += (u*jitter).T # add jitter along the reflection direction
 
-class RandomRotation(AugmentPointCloud):
+class RandomRotation(AugmentPointCloud, AugmentRegistry):
     def __init__(self, sigma:float=np.pi/8):
         self.sigma = sigma
     
-    def augment(self, pc : LidarPointCloud, *args, **kwargs):
+    def augment(self, pc : LidarPointCloud, **kwargs):
         return self._random_rotation(pc, self.sigma)
 
     def _random_rotation(self, points:LidarPointCloud, sigma:float=np.pi/8):
@@ -51,11 +62,11 @@ class RandomRotation(AugmentPointCloud):
                     [0, 0, 1]])
         points.points[:3,:] = np.dot(R, points.points[:3,:])
 
-class RandomFlipX(AugmentPointCloud):
+class RandomFlipX(AugmentPointCloud, AugmentRegistry):
     def __init__(self, prob:float=0.5):
         self.prob = prob
     
-    def augment(self, pc : LidarPointCloud, *args, **kwargs):
+    def augment(self, pc : LidarPointCloud, **kwargs):
         return self._random_flip_x(pc, self.prob)
 
     def _random_flip_x(self, points:LidarPointCloud, prob:float=0.5):
@@ -66,3 +77,12 @@ class RandomFlipX(AugmentPointCloud):
         """
         if np.random.rand()<prob:
             points.points[0,:] = -points.points[0,:] # flip along x-axis
+
+if __name__ == "__main__":
+    print(AugmentRegistry.REGISTRY)
+    pc = LidarPointCloud(np.random.randn(4,100))
+    sensor_loc = np.random.randn(3)
+
+    for aug_name, aug_cls in AugmentRegistry.REGISTRY.items():
+        aug = aug_cls()
+        pc_aug = aug.augment(pc, sensor_loc=sensor_loc)
