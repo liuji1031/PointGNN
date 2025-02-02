@@ -1,13 +1,9 @@
-import re
 from abc import ABC, abstractmethod
 import numpy as np
 from nuscenes.utils.data_classes import LidarPointCloud
+from util import camel_to_snake
 
-def camel_to_snake(name):
-    s1 = re.sub('(.)([A-Z][a-z]+)', r'\1_\2', name)
-    return re.sub('([a-z0-9])([A-Z])', r'\1_\2', s1).lower()
-
-class AugmentRegistry(ABC):
+class AugmentRegistry():
     REGISTRY = {}
     def __init_subclass__(cls, **kwargs):
         AugmentRegistry.REGISTRY[camel_to_snake(cls.__name__)] = cls
@@ -81,7 +77,7 @@ class RandomFlipX(AugmentPointCloud, AugmentRegistry):
 if __name__ == "__main__":
     print(AugmentRegistry.REGISTRY)
     pc = LidarPointCloud(np.random.randn(4,100))
-    sensor_loc = np.random.randn(3)
+    sensor_loc = np.random.randn(3)[np.newaxis,:]
 
     for aug_name, aug_cls in AugmentRegistry.REGISTRY.items():
         aug = aug_cls()
