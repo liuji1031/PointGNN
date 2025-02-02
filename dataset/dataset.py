@@ -11,8 +11,9 @@ from nuscenes.utils.geometry_utils import transform_matrix
 from pyquaternion import Quaternion
 
 from bbox import BoundingBox3D
-from dataset_augment import AugmentRegistry
-from dataset_util import encode_loc_reg_target
+from dataset.augment import AugmentRegistry
+from dataset.preprocess import PreprocessRegistry
+from dataset.util import encode_loc_reg_target
 
 
 class NuScenesDataset(data.Dataset):
@@ -20,16 +21,19 @@ class NuScenesDataset(data.Dataset):
         self,
         data_root,
         version="v1.0-mini",
-        batch=1,
+        mode="train",
+        batch=4,
         train_val_test_split=(0.8, 0.1, 0.1),
         seed=0,
         anchor_box_config=None,
+        preprocess_config=None,
         augment_config=None,
         verbose=False,
     ):
         self.data_root = data_root
         self.version = version
         self.verbose = verbose
+        self.mode = mode
         self.batch = batch
         self.nusc = NuScenes(version=version, dataroot=data_root, verbose=verbose)
         self.scenes = self.nusc.scene
@@ -37,6 +41,13 @@ class NuScenesDataset(data.Dataset):
         self.train_tokens, self.val_tokens, self.test_tokens = (
             self._split_train_val_test(train_val_test_split, seed)
         )
+
+        if self.mode == "train":
+            self.sample_tokens = self.train_tokens
+        elif self.mode == "val":
+            self.sample_tokens = self.val_tokens
+        else:
+            self.sample_tokens = self.test_tokens
 
         self.anchor_boxes, self.category_list = self._gen_anchor_boxes(
             anchor_box_config
@@ -59,14 +70,59 @@ class NuScenesDataset(data.Dataset):
         # get an average size of the anchor boxes
         self.avg_anchor_box = self._get_average_anchor_box()
 
+        # gather preprocessings from the registry
+        if preprocess_config is not None:
+            self.preprocesses = self._parse_preprocess_config(preprocess_config)
+        else:
+            self.preprocesses = []
+
         # gather augmentations from the registry
         if augment_config is not None:
             self.augmentations = self._parse_augment_config(augment_config)
+        else:
+            self.augmentations = []
 
     def __len__(self):
-        return len(self.scenes)
+        """Return the number of samples in the dataset under mode train, val or test."""
+        return len(self.sample_tokens)
 
-    def __getitem__(self, idx): ...
+    def __getitem__(self, idx):
+        """Return a sample from the dataset.
+
+        Args:
+            idx (int): index of the sample
+
+        Returns:
+            dict: dictionary of sample data
+        """
+        sample_token = self.sample_tokens[idx]
+        sample = self.nusc.get("sample", sample_token)
+        gt_boxes = self._get_gt_boxes_from_sample(sample=sample)
+        points, sensor_loc = self._get_lidar_pts_singlesweep(sample=sample)
+
+        # apply augmentations
+        if self.augmentations is not None:
+            kwargs = {"sensor_loc": sensor_loc}
+            for aug in self.augmentations:
+                aug(points,gt_boxes, **kwargs)
+
+        # compute localization regression target
+        loc_regression_target, positive_mask = self._compute_loc_regression_target(
+            gt_boxes, points
+        )
+
+        # convert to tensor
+        points_tensor = torch.from_numpy(points.points.T).float()
+        loc_regression_target_tensor = torch.from_numpy(loc_regression_target).float()
+        positive_mask_tensor = torch.from_numpy(positive_mask).bool()
+
+        return {
+            "points": points_tensor,
+            "loc_regression_target": loc_regression_target_tensor,
+            "positive_mask": positive_mask_tensor,
+            "anchor_boxes": self.anchor_boxes_tensor,
+            "sensor_loc": torch.from_numpy(sensor_loc).float(),
+        }
 
     def _parse_augment_config(self, augment_config: list):
         """Parse the augmentation configuration.
@@ -78,13 +134,32 @@ class NuScenesDataset(data.Dataset):
             dict: dictionary of augmentation objects
         """
         augmentations = []
-        for aug_name in augment_config:
+        for aug_cfg in augment_config:
+            aug_name = aug_cfg["name"]
             if aug_name not in AugmentRegistry.REGISTRY:
                 raise ValueError(f"Augmentation {aug_name} not found in registry")
             aug_method = AugmentRegistry.REGISTRY[aug_name]
-            kwargs = augment_config[aug_name]
-            augmentations.append(aug_method(**kwargs))
+            augmentations.append(aug_method(**aug_cfg["kwargs"]))
         return augmentations
+    
+    def _parse_preprocess_config(self, preprocess_config: list):
+        """Parse the preprocessing configuration.
+
+        Args:
+            preprocess_config (dict): preprocessing configuration
+
+        Returns:
+            dict: dictionary of preprocessing objects
+        """
+        preprocesses = []
+        for pre_cfg in preprocess_config:
+            pre_name = pre_cfg["name"]
+            if pre_name not in PreprocessRegistry.REGISTRY:
+                raise ValueError(f"Preprocessing {pre_name} not found in registry")
+            pre_method = PreprocessRegistry.REGISTRY[pre_name]
+            print(pre_name)
+            preprocesses.append(pre_method(**pre_cfg["kwargs"]))
+        return preprocesses
 
     def _parse_category(self):
         """build a dictionary for category and sub-category

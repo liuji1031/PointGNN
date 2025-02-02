@@ -10,7 +10,7 @@ def estimate(xyz):
     return np.linalg.svd(axyz)[-1][[-1], :]
 
 # https://github.com/falcondai/py-ransac/blob/master/ransac.py
-def run_ransac(data, inlier_threshold, sample_size, max_iterations, random_seed=None):
+def run_ransac(data, inlier_threshold, sample_size, max_iterations, random_seed=None, verbose=False):
     """_summary_
 
     Args:
@@ -22,7 +22,7 @@ def run_ransac(data, inlier_threshold, sample_size, max_iterations, random_seed=
         max_iterations (_type_): _description_
         stop_at_goal (bool, optional): _description_. Defaults to True.
         random_seed (_type_, optional): _description_. Defaults to None.
-
+        verbose (bool, optional): _description_. Defaults to False.
     Returns:
         _type_: _description_
     """
@@ -42,7 +42,8 @@ def run_ransac(data, inlier_threshold, sample_size, max_iterations, random_seed=
         if inlier_count > best_ic:
             best_ic = inlier_count
             best_model = m
-    print('took iterations:', i+1, 'best model:', best_model, 'explains:', best_ic)
+    if verbose:
+        print('took iterations:', i+1, 'best model:', best_model, 'explains:', best_ic)
     return best_model, best_ic
 
 def ground_removal(pc:LidarPointCloud,
