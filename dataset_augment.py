@@ -11,17 +11,17 @@ class AugmentRegistry():
 
 class AugmentPointCloud(ABC):
     @abstractmethod
-    def augment(self, pc:LidarPointCloud, **kwargs):
+    def augment(self, points:LidarPointCloud, **kwargs):
         pass
     
 class RandomJitter(AugmentPointCloud, AugmentRegistry):
     def __init__(self, sigma:float=0.1):
         self.sigma = sigma
     
-    def augment(self, pc : LidarPointCloud, **kwargs):
+    def augment(self, points : LidarPointCloud, **kwargs):
         assert 'sensor_loc' in kwargs
         sensor_loc = kwargs['sensor_loc']
-        return self._random_jitter(pc, sensor_loc, self.sigma)
+        return self._random_jitter(points, sensor_loc, self.sigma)
         
     def _random_jitter(self, points:LidarPointCloud, sensor_loc:np.ndarray, sigma:float=0.01):
         """Randomly jitter the points in the point cloud. 
@@ -42,8 +42,8 @@ class RandomRotation(AugmentPointCloud, AugmentRegistry):
     def __init__(self, sigma:float=np.pi/8):
         self.sigma = sigma
     
-    def augment(self, pc : LidarPointCloud, **kwargs):
-        return self._random_rotation(pc, self.sigma)
+    def augment(self, points : LidarPointCloud, **kwargs):
+        return self._random_rotation(points, self.sigma)
 
     def _random_rotation(self, points:LidarPointCloud, sigma:float=np.pi/8):
         """Randomly rotate the points in the point cloud. 
@@ -62,8 +62,8 @@ class RandomFlipX(AugmentPointCloud, AugmentRegistry):
     def __init__(self, prob:float=0.5):
         self.prob = prob
     
-    def augment(self, pc : LidarPointCloud, **kwargs):
-        return self._random_flip_x(pc, self.prob)
+    def augment(self, points : LidarPointCloud, **kwargs):
+        return self._random_flip_x(points, self.prob)
 
     def _random_flip_x(self, points:LidarPointCloud, prob:float=0.5):
         """Randomly flip the points in the point cloud along the x-axis. 
@@ -76,9 +76,9 @@ class RandomFlipX(AugmentPointCloud, AugmentRegistry):
 
 if __name__ == "__main__":
     print(AugmentRegistry.REGISTRY)
-    pc = LidarPointCloud(np.random.randn(4,100))
-    sensor_loc = np.random.randn(3)[np.newaxis,:]
+    pc_test = LidarPointCloud(np.random.randn(4,100))
+    sensor_loc_test = np.random.randn(3)[np.newaxis,:]
 
     for aug_name, aug_cls in AugmentRegistry.REGISTRY.items():
         aug = aug_cls()
-        pc_aug = aug.augment(pc, sensor_loc=sensor_loc)
+        pc_aug = aug.augment(pc_test, sensor_loc=sensor_loc_test)
