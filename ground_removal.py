@@ -45,15 +45,24 @@ def run_ransac(data, inlier_threshold, sample_size, max_iterations, random_seed=
     print('took iterations:', i+1, 'best model:', best_model, 'explains:', best_ic)
     return best_model, best_ic
 
-def ground_removal(pc:LidarPointCloud, inlier_threshold=0.2, sample_size=10, max_iterations=100, random_seed=0, restrict_range=20):
-    """_summary_
+def ground_removal(pc:LidarPointCloud,
+                   inlier_threshold=0.2,
+                   sample_size=10,
+                   max_iterations=100,
+                   random_seed=0,
+                   restrict_range=20,
+                   inplace=False):
+    """Remove ground from point cloud using RANSAC.
 
     Args:
         pc (LidarPointCloud): _description_
         inlier_threshold (float, optional): _description_. Defaults to 0.2.
         sample_size (int, optional): _description_. Defaults to 3.
         max_iterations (int, optional): _description_. Defaults to 1000.
-
+        random_seed (int, optional): _description_. Defaults to 0.
+        restrict_range (int, optional): use points within the restrict_range for
+        RANSAC calculation. Defaults to 20.
+        inplace (bool, optional): _description_. Defaults to False.
     Returns:
         _type_: _description_
     """
@@ -67,8 +76,11 @@ def ground_removal(pc:LidarPointCloud, inlier_threshold=0.2, sample_size=10, max
     projection = np.dot(aug_data, model.T) # n x 1
     mask2 = np.ravel(np.abs(projection) < inlier_threshold)
     mask=(1-(mask1 & mask2)).astype(bool)
-    print(mask.sum())
-    pc_ = copy.deepcopy(pc)
-    pc_.points = pc_.points[:,mask]
 
-    return pc_
+    if not inplace:
+        pc_ = copy.deepcopy(pc)
+        pc_.points = pc_.points[:,mask]
+        return pc_
+    else:
+        pc.points = pc.points[:,mask]
+        return pc
