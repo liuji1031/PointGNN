@@ -1,33 +1,46 @@
 import os
-import numpy as np
-import matplotlib.pyplot as plt
 from typing import List, Tuple, Union
+
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.utils.data as data
-from pyquaternion import Quaternion
-from bbox import BoundingBox3D
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.data_classes import Box, LidarPointCloud
 from nuscenes.utils.geometry_utils import transform_matrix
-from dataset_util import encode_loc_reg_target, decode_bbox
+from pyquaternion import Quaternion
+
+from bbox import BoundingBox3D
+from dataset_augment import AugmentRegistry
+from dataset_util import encode_loc_reg_target
 
 
 class NuScenesDataset(data.Dataset):
-    def __init__(self, data_root, version='v1.0-mini',
-                 train_val_test_split=(0.8, 0.1, 0.1),
-                 seed=0,
-                 anchor_box_config=None,
-                 verbose=False):
+    def __init__(
+        self,
+        data_root,
+        version="v1.0-mini",
+        batch=1,
+        train_val_test_split=(0.8, 0.1, 0.1),
+        seed=0,
+        anchor_box_config=None,
+        augment_config=None,
+        verbose=False,
+    ):
         self.data_root = data_root
         self.version = version
         self.verbose = verbose
+        self.batch = batch
         self.nusc = NuScenes(version=version, dataroot=data_root, verbose=verbose)
         self.scenes = self.nusc.scene
         self.sample_tokens_by_scene = self._get_sample_tokens_by_scene()
-        self.train_tokens, self.val_tokens, self.test_tokens = \
+        self.train_tokens, self.val_tokens, self.test_tokens = (
             self._split_train_val_test(train_val_test_split, seed)
-        
-        self.anchor_boxes, self.category_list = self._gen_anchor_boxes(anchor_box_config)
+        )
+
+        self.anchor_boxes, self.category_list = self._gen_anchor_boxes(
+            anchor_box_config
+        )
         # build a dictionary for category and sub-category. example output:
         # {"vehicle": ["car", "truck", "bus"]}
         self.category_dict = self._parse_category()
@@ -36,39 +49,61 @@ class NuScenesDataset(data.Dataset):
         if len(self.anchor_boxes):
             self.anchor_boxes_tensor = []
             for box in self.anchor_boxes:
-                box:BoundingBox3D
+                box: BoundingBox3D
                 self.anchor_boxes_tensor.append(box.to_tensor())
-            self.anchor_boxes_tensor = torch.stack(self.anchor_boxes_tensor,dim=0) # n_anchor_box x 7
+            self.anchor_boxes_tensor = torch.stack(
+                self.anchor_boxes_tensor, dim=0
+            )  # n_anchor_box x 7
             self.anchor_boxes_tensor.requires_grad = False
-        
+
         # get an average size of the anchor boxes
         self.avg_anchor_box = self._get_average_anchor_box()
-        self.avg_anchor_box_np = self.avg_anchor_box.to_numpy()
+
+        # gather augmentations from the registry
+        if augment_config is not None:
+            self.augmentations = self._parse_augment_config(augment_config)
 
     def __len__(self):
         return len(self.scenes)
 
-    def __getitem__(self, idx):
-        ...
+    def __getitem__(self, idx): ...
+
+    def _parse_augment_config(self, augment_config: list):
+        """Parse the augmentation configuration.
+
+        Args:
+            augment_config (dict): augmentation configuration
+
+        Returns:
+            dict: dictionary of augmentation objects
+        """
+        augmentations = []
+        for aug_name in augment_config:
+            if aug_name not in AugmentRegistry.REGISTRY:
+                raise ValueError(f"Augmentation {aug_name} not found in registry")
+            aug_method = AugmentRegistry.REGISTRY[aug_name]
+            kwargs = augment_config[aug_name]
+            augmentations.append(aug_method(**kwargs))
+        return augmentations
 
     def _parse_category(self):
         """build a dictionary for category and sub-category
 
         Returns:
-            dict: dictionary of category and sub-category. e.g., 
+            dict: dictionary of category and sub-category. e.g.,
             {"vehicle": ["car", "truck", "bus"]}
         """
         category_dict = {}
         for c in self.category_list:
             if c == "background":
                 continue
-            cat,sub_cat = c.split(".")[:2]
+            cat, sub_cat = c.split(".")[:2]
             if cat not in category_dict:
                 category_dict[cat] = []
             category_dict[cat].append(sub_cat)
         return category_dict
-    
-    def _in_category(self, category_name:str):
+
+    def _in_category(self, category_name: str):
         """Check if the category is in the category list.
 
         Args:
@@ -83,11 +118,11 @@ class NuScenesDataset(data.Dataset):
         else:
             cat, sub_cat = category_name.split(".")[:2]
             if cat in self.category_dict and sub_cat in self.category_dict[cat]:
-                return True, cat+"."+sub_cat
+                return True, cat + "." + sub_cat
             else:
                 return False, ""
 
-    def _gen_anchor_boxes(self, anchor_box_config : Union[dict,None]):
+    def _gen_anchor_boxes(self, anchor_box_config: Union[dict, None]):
         """Generate anchor boxes.
 
         Args:
@@ -98,20 +133,20 @@ class NuScenesDataset(data.Dataset):
         """
         if anchor_box_config is None:
             return None
-        
+
         anchor_boxes = []
         category_list = []
         for config in anchor_box_config:
-            w,l,h = config["wlh"]
-            bbox = BoundingBox3D(0,0,0,w,l,h,0)
+            w, l, h = config["wlh"]
+            bbox = BoundingBox3D(0, 0, 0, w, l, h, 0)
             bbox.name = config["class"]
             anchor_boxes.append(bbox)
             category_list.append(config["class"])
         return anchor_boxes, category_list
-    
+
     def _get_average_anchor_box(self):
         """Get the average of anchor boxes."""
-        avg_box = BoundingBox3D(0,0,0,0,0,0,0)
+        avg_box = BoundingBox3D(0, 0, 0, 0, 0, 0, 0)
         for box in self.anchor_boxes:
             avg_box.l += box.l
             avg_box.w += box.w
@@ -126,7 +161,7 @@ class NuScenesDataset(data.Dataset):
 
         Args:
         Returns:
-            list: list of sample tokens by scene, i.e., 
+            list: list of sample tokens by scene, i.e.,
             [[tokens from scene 1], [tokens from scene 2], ...]
         """
         sample_tokens_by_scene = []
@@ -135,14 +170,13 @@ class NuScenesDataset(data.Dataset):
             sample_token = scene["first_sample_token"]
             while sample_token != "":
                 tokens.append(sample_token)
-                sample_token = self.nusc.get("sample",sample_token)["next"]
+                sample_token = self.nusc.get("sample", sample_token)["next"]
             sample_tokens_by_scene.append(tokens)
         return sample_tokens_by_scene
-    
-    def _split_train_val_test(self,
-                    train_val_test_split:Tuple[float] = (0.8,0.1,0.1),
-                    seed:int = 0
-                    ) -> Tuple[List[str]]:
+
+    def _split_train_val_test(
+        self, train_val_test_split: Tuple[float] = (0.8, 0.1, 0.1), seed: int = 0
+    ) -> Tuple[List[str]]:
         """Split the dataset into training and validation set.
 
         Args:
@@ -161,18 +195,18 @@ class NuScenesDataset(data.Dataset):
             # stratified split
             # shuffle index
             n_samples = len(tokens)
-            split_ind = (np.cumsum(train_val_test_split)*n_samples).astype(int)
+            split_ind = (np.cumsum(train_val_test_split) * n_samples).astype(int)
             np.random.seed(seed)
             ind = np.random.permutation(n_samples)
-            ind_train = ind[:split_ind[0]]
-            ind_val = ind[split_ind[0]:split_ind[1]]
-            ind_test = ind[split_ind[1]:]
-            
+            ind_train = ind[: split_ind[0]]
+            ind_val = ind[split_ind[0] : split_ind[1]]
+            ind_test = ind[split_ind[1] :]
+
             train_tokens += [tokens[k] for k in ind_train]
             val_tokens += [tokens[k] for k in ind_val]
             test_tokens += [tokens[k] for k in ind_test]
         return train_tokens, val_tokens, test_tokens
-    
+
     def _get_category_name(self, ann_token):
         """get category name from annotation token
 
@@ -182,9 +216,9 @@ class NuScenesDataset(data.Dataset):
         Returns:
             str: category name
         """
-        return self.nusc.get('sample_annotation', ann_token)["category_name"]
-    
-    def _get_gt_box_label(self, gt_box : Box):
+        return self.nusc.get("sample_annotation", ann_token)["category_name"]
+
+    def _get_gt_box_label(self, gt_box: Box):
         """Get the label of the ground truth box.
 
         Args:
@@ -195,9 +229,9 @@ class NuScenesDataset(data.Dataset):
         """
         ...
 
-    def _get_gt_boxes_from_sample(self, sample_token:str="",
-                                  sample:Union[dict, None]=None,
-                                  render=False) -> List[dict]:
+    def _get_gt_boxes_from_sample(
+        self, sample_token: str = "", sample: Union[dict, None] = None, render=False
+    ) -> List[dict]:
         """Get the ground truth bounding boxes in a sample.
 
         Args:
@@ -209,13 +243,14 @@ class NuScenesDataset(data.Dataset):
         sample = sample if sample is not None else self.nusc.get("sample", sample_token)
 
         annotations = sample["anns"]
-        _, boxes, _ = self.nusc.get_sample_data(sample['data']['LIDAR_TOP'],
-                                       use_flat_vehicle_coordinates=True)
-        
+        _, boxes, _ = self.nusc.get_sample_data(
+            sample["data"]["LIDAR_TOP"], use_flat_vehicle_coordinates=True
+        )
+
         gt_boxes = []
         for k, ann_token in enumerate(annotations):
             category_name = self._get_category_name(ann_token)
-            
+
             # keep only category and sub-category name in "category_name"
             in_category, category_name = self._in_category(category_name)
             if in_category:
@@ -233,7 +268,7 @@ class NuScenesDataset(data.Dataset):
                     plt.show()
                     print(gt_boxes[-1])
         return gt_boxes
-    
+
     def _get_raw_lidar_pts(self, sample):
         """retrieves raw lidar points from filename stored in sample data
 
@@ -244,13 +279,13 @@ class NuScenesDataset(data.Dataset):
             LidarPointCloud: raw lidar points
         """
         lidar_token = sample["data"]["LIDAR_TOP"]
-        lidar_info = self.nusc.get('sample_data', lidar_token)
-        
-        lidar_path = os.path.join(self.nusc.dataroot,lidar_info["filename"])
+        lidar_info = self.nusc.get("sample_data", lidar_token)
+
+        lidar_path = os.path.join(self.nusc.dataroot, lidar_info["filename"])
         lidar_data = LidarPointCloud.from_file(str(lidar_path))
         return lidar_data
-    
-    def _transform_matrix_from_pose(self, pose:dict, inverse:bool):
+
+    def _transform_matrix_from_pose(self, pose: dict, inverse: bool):
         """wrapper function for getting the transformation matrix from pose dict
 
         Args:
@@ -260,29 +295,30 @@ class NuScenesDataset(data.Dataset):
         Returns:
             <np.float32: 4, 4>: 4 by 4 transformation matrix
         """
-        return transform_matrix(pose['translation'],
-                                Quaternion(pose['rotation']),
-                                inverse=inverse)
+        return transform_matrix(
+            pose["translation"], Quaternion(pose["rotation"]), inverse=inverse
+        )
 
-    def _get_lidar_pts_singlesweep(self,
-                                   sample_token:str="",
-                                   sample:Union[dict, None]=None,
-                                   sensor="LIDAR_TOP",
-                                convert_to_ego_frame=True,
-                                min_dist=1.0,
-                                nkeep="all"):
-        """returns the lidar points for a single sweep
+    def _get_lidar_pts_singlesweep(
+        self,
+        sample_token: str = "",
+        sample: Union[dict, None] = None,
+        sensor="LIDAR_TOP",
+        convert_to_ego_frame=True,
+        min_dist=1.0,
+    ):
+        """Returns the lidar points for a single sweep
 
         Args:
             sample_token (str, optional): sample token. Defaults to "".
             sample (Union[dict, None], optional): sample dictionary. Defaults to None.
             sensor (str, optional): sensor name. Defaults to "LIDAR_TOP".
-            convert_to_ego_frame (bool, optional): whether to convert the points to ego frame. Defaults to True.
+            convert_to_ego_frame (bool, optional): whether to convert the points to ego frame.
+            Defaults to True.
             min_dist (float, optional): minimum distance to remove points. Defaults to 1.0.
-            nkeep (Union[str, int], optional): number of points to keep. Defaults to "all".
-
         Returns:
             LidarPointCloud: lidar points
+            np.ndarray: sensor location relative to the car
         """
         sample = sample if sample is not None else self.nusc.get("sample", sample_token)
         sample_data = self.nusc.get("sample_data", sample["data"][sensor])
@@ -292,17 +328,22 @@ class NuScenesDataset(data.Dataset):
 
         if not convert_to_ego_frame:
             return pc
-        
+
         # get sensor ref car transformation
-        pose = self.nusc.get("calibrated_sensor", sample_data["calibrated_sensor_token"])
-        sensor_ref_car = self._transform_matrix_from_pose(pose,inverse=False)
-        
+        pose = self.nusc.get(
+            "calibrated_sensor", sample_data["calibrated_sensor_token"]
+        )
+        sensor_ref_car = self._transform_matrix_from_pose(pose, inverse=False)
+        sensor_loc = np.array(pose["translation"])[np.newaxis, :]
+
         # convert sensor points to car body frame
         pc.transform(sensor_ref_car)
 
-        return pc
+        return pc, sensor_loc
 
-    def _compute_loc_regression_target(self, gt_boxes:List[BoundingBox3D], points:LidarPointCloud):
+    def _compute_loc_regression_target(
+        self, gt_boxes: List[BoundingBox3D], points: LidarPointCloud
+    ):
         """Compute the regression target for localization head.
 
         Args:
@@ -312,23 +353,23 @@ class NuScenesDataset(data.Dataset):
             np.ndarray: 1D array of labels
         """
         n = points.nbr_points()
-        loc_regression_target = np.zeros((n,3), dtype=np.float32)
+        loc_regression_target = np.zeros((n, 3), dtype=np.float32)
         positive_mask = np.zeros(n, dtype=bool)
         for gt_box in gt_boxes:
-            mask = gt_box.within_gt_box(points.points[:3,:].T)
+            mask = gt_box.within_gt_box(points.points[:3, :].T)
 
             # compute localization regression target for each point within the gt box
-            encode_loc_reg_target(reg_target=loc_regression_target,
-                                  box_xyz=gt_box.xyz_np,
-                                  box_lhw=gt_box.lwh_np,
-                                  box_r=gt_box.r_np,
-                                  ref_box=self.avg_anchor_box,
-                                  points=points,
-                                  mask=mask)
+            encode_loc_reg_target(
+                reg_target=loc_regression_target,
+                box_xyz=gt_box.xyz_np,
+                box_lhw=gt_box.lwh_np,
+                box_r=gt_box.r_np,
+                ref_box=self.avg_anchor_box,
+                points=points,
+                mask=mask,
+            )
 
             # add to the positive mask
             positive_mask[mask] = True
 
         return loc_regression_target, positive_mask
-
-    
