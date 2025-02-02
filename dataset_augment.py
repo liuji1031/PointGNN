@@ -1,6 +1,9 @@
 from abc import ABC, abstractmethod
+from typing import List
 import numpy as np
+from pyquaternion import Quaternion
 from nuscenes.utils.data_classes import LidarPointCloud
+from bbox import BoundingBox3D
 from util import camel_to_snake
 
 class AugmentRegistry():
@@ -11,17 +14,18 @@ class AugmentRegistry():
 
 class AugmentPointCloud(ABC):
     @abstractmethod
-    def augment(self, points:LidarPointCloud, **kwargs):
+    def augment(self, points:LidarPointCloud,gt_boxes:List[BoundingBox3D],**kwargs):
         pass
     
 class RandomJitter(AugmentPointCloud, AugmentRegistry):
     def __init__(self, sigma:float=0.1):
         self.sigma = sigma
     
-    def augment(self, points : LidarPointCloud, **kwargs):
+    def augment(self, points : LidarPointCloud,gt_boxes:List[BoundingBox3D],**kwargs):
         assert 'sensor_loc' in kwargs
         sensor_loc = kwargs['sensor_loc']
-        return self._random_jitter(points, sensor_loc, self.sigma)
+        sigma = kwargs.get('sigma', self.sigma)
+        self._random_jitter(points, sensor_loc, sigma)
         
     def _random_jitter(self, points:LidarPointCloud, sensor_loc:np.ndarray, sigma:float=0.01):
         """Randomly jitter the points in the point cloud. 
@@ -42,10 +46,10 @@ class RandomRotation(AugmentPointCloud, AugmentRegistry):
     def __init__(self, sigma:float=np.pi/8):
         self.sigma = sigma
     
-    def augment(self, points : LidarPointCloud, **kwargs):
-        return self._random_rotation(points, self.sigma)
+    def augment(self, points : LidarPointCloud,gt_boxes:List[BoundingBox3D], **kwargs):
+        self._random_rotation(points,gt_boxes, self.sigma)
 
-    def _random_rotation(self, points:LidarPointCloud, sigma:float=np.pi/8):
+    def _random_rotation(self, points:LidarPointCloud,gt_boxes:List[BoundingBox3D], sigma:float=np.pi/8):
         """Randomly rotate the points in the point cloud. 
 
         Args:
@@ -58,21 +62,32 @@ class RandomRotation(AugmentPointCloud, AugmentRegistry):
                     [0, 0, 1]])
         points.points[:3,:] = np.dot(R, points.points[:3,:])
 
-class RandomFlipX(AugmentPointCloud, AugmentRegistry):
+        # rotate gt boxes
+        q = Quaternion(axis=[0,0,1],angle=r)
+        for box in gt_boxes:
+            box.rotate(q)
+
+
+class RandomFlipY(AugmentPointCloud, AugmentRegistry):
+    """Randomly flip the points in the point cloud along the y-axis."""
     def __init__(self, prob:float=0.5):
         self.prob = prob
     
-    def augment(self, points : LidarPointCloud, **kwargs):
-        return self._random_flip_x(points, self.prob)
+    def augment(self, points : LidarPointCloud,gt_boxes:List[BoundingBox3D], **kwargs):
+        self._random_flip_y(points,gt_boxes, self.prob)
 
-    def _random_flip_x(self, points:LidarPointCloud, prob:float=0.5):
-        """Randomly flip the points in the point cloud along the x-axis. 
+    def _random_flip_y(self, points:LidarPointCloud,gt_boxes:List[BoundingBox3D], prob:float=0.5):
+        """Randomly flip the points in the point cloud along the y-axis. 
 
         Args:
             points (LidarPointCloud): point cloud expressd in the ego (car) frame
         """
         if np.random.rand()<prob:
-            points.points[0,:] = -points.points[0,:] # flip along x-axis
+            points.points[1,:] *= -1 # flip along y-axis
+        
+            # flip gt boxes
+            for box in gt_boxes:
+                box.flip_y()
 
 if __name__ == "__main__":
     print(AugmentRegistry.REGISTRY)
