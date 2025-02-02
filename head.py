@@ -1,7 +1,12 @@
 from mlp import Mlp
 
-class ClassificationHead(Mlp):
-    """ the classification head for predicting the class of each point.
+class ObjectClassificationHead(Mlp):
+    """ the classification head for predicting the object class of each point.
+    returns the logits for each class
+    """
+
+class BackgroundClassificationHead(Mlp):
+    """ the binary classification head for predicting the background class of each point.
     returns the logits for each class
     """
 
