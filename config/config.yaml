@@ -1,3 +1,57 @@
+Dataset:
+  nuscenes:
+    data_root: /home/ji-liu/Robotics/NuScenes/NuScenes_mini
+    version: v1.0-mini
+    num_class: &num_class 6
+    mini_batch_size : 4
+    train_val_test_split : [0.8, 0.1, 0.1]
+    x_range: &x_range [-40.0, 40.0] 
+    y_range: &y_range [-40.0, 40.0]
+    z_range: &z_range [-1.0, 8.0]
+    preprocess:
+    - name: ground_removal_ransac
+      kwargs:
+        inlier_threshold: 0.2
+        sample_size: 8
+        max_iterations: 100
+        random_seed: 0
+        restrict_range: 50
+        inplace: True
+    - name: voxel_downsample
+      kwargs:
+        x_range: *x_range
+        y_range: *y_range
+        z_range: *z_range
+        voxel_size:
+          x: 0.2
+          y: 0.2
+          z: 0.2
+    augmentation:
+    - name: random_jitter
+      kwargs:
+        sigma: 0.05
+    - name: random_rotation
+      kwargs:
+        sigma: 0.3927 # pi/8
+    - name: random_flip_y
+      kwargs:
+        prob: 0.5
+    anchor_box:
+      - class: vehicle.car
+        wlh: [1.9,4.6,1.7]
+      - class: vehicle.truck
+        wlh: [2.4,6.5,2.6]
+      - class: vehicle.bus
+        wlh: [2.9,10.0,3.5]
+      - class: vehicle.construction
+        wlh: [2.6,5.6,2.4]
+      - class: vehicle.bicycle
+        wlh: [0.6,1.8,1.4]
+      - class: vehicle.motorcycle
+        wlh: [0.68, 1.95, 1.47]
+      - class: vehicle.trailer
+        wlh: [2.3,10.0,3.7]
+
 VoxelDownsample:
   x_range: [-40.0, 40.0]
   y_range: [-40.0, 40.0]
@@ -13,35 +67,49 @@ GNNLayers:
       dim_lst: [64, 64]
       activation: relu
       output_activation: none
+      add_batch_norm: True
     mlp_f:
       feat_dim: 32
       hidden_dim_lst: [32, 32]
       activation: relu
       output_activation: none
+      add_batch_norm: True
     mlp_g:
       dim_lst: [64, 64]
       activation: relu
       output_activation: none
+      add_batch_norm: True
   - name: GNN_layer_2
     mlp_h:
       dim_lst: [64, 64]
       activation: relu
       output_activation: none
+      add_batch_norm: True
     mlp_f:
       feat_dim: 32
       hidden_dim_lst: [32, 32]
       activation: relu
       output_activation: none
+      add_batch_norm: True
     mlp_g:
       dim_lst: [64, 64]
       activation: relu
       output_activation: none
+      add_batch_norm: True
 
-ClassificationHead:
+BackgroundClassificationHead:
   mlp:
-    dim_lst: [64, 64, 3] # 3 classes, vehicle and human and background
+    dim_lst: [64, 64, 2] # binary classification, background or foreground 
     activation: relu
     output_activation: none
+    add_batch_norm: True
+
+ObjectClassificationHead:
+  mlp:
+    dim_lst: [64, 64, *num_class] # 6 classes in nuscenes
+    activation: relu
+    output_activation: none
+    add_batch_norm: True
 
 LocalizationHead: # regress bounding boxes, one head for each foreground class
   - vehicles:
@@ -54,25 +122,3 @@ LocalizationHead: # regress bounding boxes, one head for each foreground class
         dim_lst: [64, 64, 7] # 7 delta values for x, y, z, l, w, h, theta
         activation: relu
         output_activation: none
-
-Dataset:
-  nuscenes:
-    filepath: /home/ji-liu/Robotics/NuScenes/NuScenes_mini
-    version: v1.0-mini
-    num_classes: 6
-
-AnchorBox:
-  - class: vehicle.car
-    wlh: [1.9,4.6,1.7]
-  - class: vehicle.truck
-    wlh: [2.4,6.5,2.6]
-  - class: vehicle.bus
-    wlh: [2.9,10.0,3.5]
-  - class: vehicle.construction
-    wlh: [2.6,5.6,2.4]
-  - class: vehicle.bicycle
-    wlh: [0.6,1.8,1.4]
-  - class: vehicle.motorcycle
-    wlh: [0.68, 1.95, 1.47]
-  - class: vehicle.trailer
-    wlh: [2.3,10.0,3.7]
