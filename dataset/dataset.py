@@ -20,21 +20,29 @@ class NuScenesDataset(data.Dataset):
     def __init__(
         self,
         data_root,
-        version="v1.0-mini",
-        mode="train",
-        batch=4,
+        version,
+        mode,
+        num_class,
+        x_range=(-40, 40),
+        y_range=(-40, 40),
+        z_range=(-1, 8),
+        mini_batch_size=4,
         train_val_test_split=(0.8, 0.1, 0.1),
         seed=0,
-        anchor_box_config=None,
-        preprocess_config=None,
-        augment_config=None,
+        preprocess=None,
+        augmentation=None,
+        anchor_box=None,
         verbose=False,
     ):
         self.data_root = data_root
         self.version = version
         self.verbose = verbose
         self.mode = mode
-        self.batch = batch
+        self.num_class = num_class
+        self.mini_batch_size = mini_batch_size
+        self.x_range = x_range
+        self.y_range = y_range
+        self.z_range = z_range
         self.nusc = NuScenes(version=version, dataroot=data_root, verbose=verbose)
         self.scenes = self.nusc.scene
         self.sample_tokens_by_scene = self._get_sample_tokens_by_scene()
@@ -50,7 +58,7 @@ class NuScenesDataset(data.Dataset):
             self.sample_tokens = self.test_tokens
 
         self.anchor_boxes, self.category_list = self._gen_anchor_boxes(
-            anchor_box_config
+            anchor_box
         )
         # build a dictionary for category and sub-category. example output:
         # {"vehicle": ["car", "truck", "bus"]}
@@ -71,14 +79,14 @@ class NuScenesDataset(data.Dataset):
         self.avg_anchor_box = self._get_average_anchor_box()
 
         # gather preprocessings from the registry
-        if preprocess_config is not None:
-            self.preprocesses = self._parse_preprocess_config(preprocess_config)
+        if preprocess is not None:
+            self.preprocesses = self._parse_preprocess_config(preprocess)
         else:
             self.preprocesses = []
 
         # gather augmentations from the registry
-        if augment_config is not None:
-            self.augmentations = self._parse_augment_config(augment_config)
+        if augmentation is not None:
+            self.augmentations = self._parse_augment_config(augmentation)
         else:
             self.augmentations = []
 
@@ -100,11 +108,14 @@ class NuScenesDataset(data.Dataset):
         gt_boxes = self._get_gt_boxes_from_sample(sample=sample)
         points, sensor_loc = self._get_lidar_pts_singlesweep(sample=sample)
 
+        # apply preprocessings
+        for pre in self.preprocesses:
+            pre(points)
+
         # apply augmentations
-        if self.augmentations is not None:
-            kwargs = {"sensor_loc": sensor_loc}
-            for aug in self.augmentations:
-                aug(points,gt_boxes, **kwargs)
+        kwargs = {"sensor_loc": sensor_loc}
+        for aug in self.augmentations:
+            aug(points,gt_boxes, **kwargs)
 
         # compute localization regression target
         loc_regression_target, positive_mask = self._compute_loc_regression_target(
@@ -120,8 +131,6 @@ class NuScenesDataset(data.Dataset):
             "points": points_tensor,
             "loc_regression_target": loc_regression_target_tensor,
             "positive_mask": positive_mask_tensor,
-            "anchor_boxes": self.anchor_boxes_tensor,
-            "sensor_loc": torch.from_numpy(sensor_loc).float(),
         }
 
     def _parse_augment_config(self, augment_config: list):
@@ -157,7 +166,6 @@ class NuScenesDataset(data.Dataset):
             if pre_name not in PreprocessRegistry.REGISTRY:
                 raise ValueError(f"Preprocessing {pre_name} not found in registry")
             pre_method = PreprocessRegistry.REGISTRY[pre_name]
-            print(pre_name)
             preprocesses.append(pre_method(**pre_cfg["kwargs"]))
         return preprocesses
 
@@ -213,7 +221,7 @@ class NuScenesDataset(data.Dataset):
         category_list = []
         for config in anchor_box_config:
             w, l, h = config["wlh"]
-            bbox = BoundingBox3D(0, 0, 0, w, l, h, 0)
+            bbox = BoundingBox3D(0., 0., 0., w, l, h, 0.)
             bbox.name = config["class"]
             anchor_boxes.append(bbox)
             category_list.append(config["class"])
@@ -221,7 +229,7 @@ class NuScenesDataset(data.Dataset):
 
     def _get_average_anchor_box(self):
         """Get the average of anchor boxes."""
-        avg_box = BoundingBox3D(0, 0, 0, 0, 0, 0, 0)
+        avg_box = BoundingBox3D(0., 0., 0., 0., 0., 0., 0.)
         for box in self.anchor_boxes:
             avg_box.l += box.l
             avg_box.w += box.w
@@ -229,6 +237,7 @@ class NuScenesDataset(data.Dataset):
         avg_box.l /= len(self.anchor_boxes)
         avg_box.w /= len(self.anchor_boxes)
         avg_box.h /= len(self.anchor_boxes)
+        avg_box.update()
         return avg_box
 
     def _get_sample_tokens_by_scene(self) -> List[List[str]]:
@@ -330,6 +339,13 @@ class NuScenesDataset(data.Dataset):
             in_category, category_name = self._in_category(category_name)
             if in_category:
                 gt_box = BoundingBox3D.from_nuscene_box(boxes[k])
+
+                if gt_box.x>=self.x_range[0] and gt_box.x<=self.x_range[1] and \
+                    gt_box.y>=self.y_range[0] and gt_box.y<=self.y_range[1]:
+                    pass
+                else:
+                    continue
+
                 gt_box.name = category_name
 
                 # also figure out the label, i.e., index of the category
@@ -342,6 +358,11 @@ class NuScenesDataset(data.Dataset):
                     self.nusc.render_annotation(ann_token)
                     plt.show()
                     print(gt_boxes[-1])
+        
+        if len(gt_boxes)>0:
+            # sort the boxes by distance to the origin
+            gt_boxes = sorted(gt_boxes, key=lambda b: b.x**2 + b.y**2) 
+
         return gt_boxes
 
     def _get_raw_lidar_pts(self, sample):
@@ -428,7 +449,7 @@ class NuScenesDataset(data.Dataset):
             np.ndarray: 1D array of labels
         """
         n = points.nbr_points()
-        loc_regression_target = np.zeros((n, 3), dtype=np.float32)
+        loc_regression_target = np.zeros((n, 7), dtype=np.float32)
         positive_mask = np.zeros(n, dtype=bool)
         for gt_box in gt_boxes:
             mask = gt_box.within_gt_box(points.points[:3, :].T)
