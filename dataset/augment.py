@@ -66,6 +66,7 @@ class RandomRotation(AugmentPointCloud, AugmentRegistry):
         q = Quaternion(axis=[0,0,1],angle=r)
         for box in gt_boxes:
             box.rotate(q)
+            box.update()
 
 
 class RandomFlipY(AugmentPointCloud, AugmentRegistry):
@@ -88,6 +89,7 @@ class RandomFlipY(AugmentPointCloud, AugmentRegistry):
             # flip gt boxes
             for box in gt_boxes:
                 box.flip_y()
+                box.update()
 
 if __name__ == "__main__":
     print(AugmentRegistry.REGISTRY)
