@@ -158,6 +158,12 @@ class BoundingBox3D(Box):
         return np.array([self.x, self.y, self.z, self.l, self.w, self.h, self.r])[
             np.newaxis, :
         ]
+    
+    def update(self):
+        """Update the bounding box after changing the attributes."""
+        self.polygon = self._get_2d_polgon()
+        self.numpy = self.to_numpy()
+        self.tensor = self.to_tensor()
 
     def find_gt_box_normals(self) -> typing.Tuple[np.ndarray, np.ndarray]:
         """
