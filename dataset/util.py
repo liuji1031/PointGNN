@@ -30,22 +30,18 @@ def encode_loc_reg_target(reg_target:Union[np.ndarray,torch.Tensor],
     if box_xyz.ndim == 1:
         box_xyz = rearrange(box_xyz,'d -> 1 d')
     if isinstance(box_xyz, torch.Tensor):
-        ref_box_xyz = ref_box.xyz_tensor
+        ref_box_lhw = ref_box.lwh_tensor
+        log = torch.log
         points_xyz = torch.from_numpy(points.points[:3,:].T)
     else:
-        ref_box_xyz = ref_box.xyz_np
+        ref_box_lhw = ref_box.lwh_np
+        log = np.log
         points_xyz = points.points[:3,:].T
-    reg_target[mask,:3] = (box_xyz - points_xyz)/ref_box_xyz
+    reg_target[mask,:3] = ((box_xyz - points_xyz)/ref_box_lhw)[mask,:]
 
     # l, w, h target
     if box_lhw.ndim == 1:
         box_lhw = rearrange(box_lhw,'d -> 1 d')
-    if isinstance(box_lhw, torch.Tensor):
-        ref_box_lhw = ref_box.lwh_tensor
-        log = torch.log
-    else:
-        ref_box_lhw = ref_box.lwh_np
-        log = np.log
     reg_target[mask,3:6] = log(box_lhw/ref_box_lhw)
 
     # rotation target, scaled to [-1,1]
