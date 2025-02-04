@@ -1,8 +1,10 @@
-from abc import ABC, abstractmethod
-from typing import List
+from typing import List, Union
 import numpy as np
+import torch
 from pyquaternion import Quaternion
 from nuscenes.utils.data_classes import LidarPointCloud
+from torch_geometric.data import Data
+from torch_geometric.transforms import BaseTransform
 from bbox import BoundingBox3D
 from util import camel_to_snake
 
@@ -12,84 +14,93 @@ class AugmentRegistry():
         AugmentRegistry.REGISTRY[camel_to_snake(cls.__name__)] = cls
         super().__init_subclass__(**kwargs)
 
-class AugmentPointCloud(ABC):
-    @abstractmethod
-    def augment(self, points:LidarPointCloud,gt_boxes:List[BoundingBox3D],**kwargs):
-        pass
-    
-class RandomJitter(AugmentPointCloud, AugmentRegistry):
+class RandomJitter(BaseTransform, AugmentRegistry):
     def __init__(self, sigma:float=0.1):
         self.sigma = sigma
-    
-    def augment(self, points : LidarPointCloud,gt_boxes:List[BoundingBox3D],**kwargs):
-        assert 'sensor_loc' in kwargs
-        sensor_loc = kwargs['sensor_loc']
-        sigma = kwargs.get('sigma', self.sigma)
-        self._random_jitter(points, sensor_loc, sigma)
-        
-    def _random_jitter(self, points:LidarPointCloud, sensor_loc:np.ndarray, sigma:float=0.01):
+
+    def forward(self, data:Data):
+        assert 'sensor_loc' in data
+        sensor_loc = data.sensor_loc
+        data.pos = self._random_jitter(data.pos, sensor_loc)
+        return data
+
+    def _random_jitter(self, points:torch.Tensor, sensor_loc:torch.Tensor):
         """Randomly jitter the points in the point cloud. 
 
         Args:
-            points (LidarPointCloud): point cloud expressd in the ego (car) frame
-            sensor_loc (np.ndarray): sensor location in the ego frame
+            points (torch.Tensor): N x 3 array of point cloud expressd in the ego (car) frame
+            sensor_loc (torch.Tensor): sensor location in the ego frame
         """
         assert sensor_loc.ndim==2
+        assert points.shape[1]==3
         # jitter along the reflection direction
-        tmp = points.points[:3,:].T-sensor_loc
-        d = np.linalg.norm(tmp,axis=1,keepdims=True) # n x 1
+        tmp = points-sensor_loc
+        d = torch.linalg.norm(tmp,dim=1,keepdim=True) # n x 1
         u = tmp/d # unit vector, n x 3
-        jitter = np.random.randn(*d.shape)*sigma # n x 1
-        points.points[:3,:] += (u*jitter).T # add jitter along the reflection direction
+        jitter = torch.randn_like(d)*self.sigma # n x 1
+        points += u*jitter # add jitter along the reflection direction
+        return points
 
-class RandomRotation(AugmentPointCloud, AugmentRegistry):
+
+class RandomRotation(BaseTransform, AugmentRegistry):
     def __init__(self, sigma:float=np.pi/8):
         self.sigma = sigma
-    
-    def augment(self, points : LidarPointCloud,gt_boxes:List[BoundingBox3D], **kwargs):
-        self._random_rotation(points,gt_boxes, self.sigma)
 
-    def _random_rotation(self, points:LidarPointCloud,gt_boxes:List[BoundingBox3D], sigma:float=np.pi/8):
+    def forward(self, data:Data):
+        assert 'sensor_loc' in data
+        assert 'gt_boxes' in data
+        data.pos = self._random_rotation(data.pos, data.gt_boxes)
+        return data
+
+    def _random_rotation(self, points:torch.Tensor,gt_boxes:List[BoundingBox3D]):
         """Randomly rotate the points in the point cloud. 
 
         Args:
-            points (LidarPointCloud): point cloud expressd in the ego (car) frame
+            points (torch.Tensor): point cloud expressd in the ego (car) frame
         """
+        assert points.shape[1]==3
         # rotation matrix
-        r = np.random.randn()*sigma
+        r = np.random.randn()*self.sigma
         R = np.array([[np.cos(r), -np.sin(r), 0],
                     [np.sin(r), np.cos(r), 0],
                     [0, 0, 1]])
-        points.points[:3,:] = np.dot(R, points.points[:3,:])
+        R = torch.from_numpy(R).float()
+        points = torch.matmul(R, points.T).t()
 
         # rotate gt boxes
         q = Quaternion(axis=[0,0,1],angle=r)
         for box in gt_boxes:
             box.rotate(q)
             box.update()
+        return points
 
 
-class RandomFlipY(AugmentPointCloud, AugmentRegistry):
+class RandomFlipY(BaseTransform, AugmentRegistry):
     """Randomly flip the points in the point cloud along the y-axis."""
     def __init__(self, prob:float=0.5):
         self.prob = prob
-    
-    def augment(self, points : LidarPointCloud,gt_boxes:List[BoundingBox3D], **kwargs):
-        self._random_flip_y(points,gt_boxes, self.prob)
 
-    def _random_flip_y(self, points:LidarPointCloud,gt_boxes:List[BoundingBox3D], prob:float=0.5):
+    def forward(self, data:Data):
+        assert 'sensor_loc' in data
+        assert 'gt_boxes' in data
+        data.pos = self._random_flip_y(data.pos, data.gt_boxes)
+        return data
+
+    def _random_flip_y(self, points:torch.Tensor,gt_boxes:List[BoundingBox3D]):
         """Randomly flip the points in the point cloud along the y-axis. 
 
         Args:
-            points (LidarPointCloud): point cloud expressd in the ego (car) frame
+            points (torch.Tensor): N x 3 array of point cloud expressd in the ego (car) frame
         """
-        if np.random.rand()<prob:
-            points.points[1,:] *= -1 # flip along y-axis
+        if np.random.rand()<self.prob:
+            points[:,1] *= -1 # flip along y-axis
         
             # flip gt boxes
             for box in gt_boxes:
                 box.flip_y()
                 box.update()
+        
+        return points
 
 if __name__ == "__main__":
     print(AugmentRegistry.REGISTRY)
