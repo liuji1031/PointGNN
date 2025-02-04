@@ -3,8 +3,12 @@ from typing import List, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
+import pathlib
+import multiprocessing as mp
 import torch
-import torch.utils.data as data
+from tqdm import tqdm
+from torch_geometric.data import Data, Dataset
+from torch_geometric.transforms import Compose
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.data_classes import Box, LidarPointCloud
 from nuscenes.utils.geometry_utils import transform_matrix
@@ -12,11 +16,11 @@ from pyquaternion import Quaternion
 
 from bbox import BoundingBox3D
 from dataset.augment import AugmentRegistry
-from dataset.preprocess import PreprocessRegistry
+from dataset.preprocess import PreprocessRegistry, PreprocessPointCloud
 from dataset.util import encode_loc_reg_target
 
 
-class NuScenesDataset(data.Dataset):
+class NuScenesDataset(Dataset):
     def __init__(
         self,
         data_root,
@@ -26,20 +30,20 @@ class NuScenesDataset(data.Dataset):
         x_range=(-40, 40),
         y_range=(-40, 40),
         z_range=(-1, 8),
-        mini_batch_size=4,
         train_val_test_split=(0.8, 0.1, 0.1),
         seed=0,
         preprocess=None,
         augmentation=None,
         anchor_box=None,
         verbose=False,
+        **kwargs,
     ):
+        # reminder to self, processed_dir = root/processed, raw_dir = root/raw
         self.data_root = data_root
         self.version = version
         self.verbose = verbose
         self.mode = mode
         self.num_class = num_class
-        self.mini_batch_size = mini_batch_size
         self.x_range = x_range
         self.y_range = y_range
         self.z_range = z_range
@@ -57,9 +61,7 @@ class NuScenesDataset(data.Dataset):
         else:
             self.sample_tokens = self.test_tokens
 
-        self.anchor_boxes, self.category_list = self._gen_anchor_boxes(
-            anchor_box
-        )
+        self.anchor_boxes, self.category_list = self._gen_anchor_boxes(anchor_box)
         # build a dictionary for category and sub-category. example output:
         # {"vehicle": ["car", "truck", "bus"]}
         self.category_dict = self._parse_category()
@@ -86,52 +88,107 @@ class NuScenesDataset(data.Dataset):
 
         # gather augmentations from the registry
         if augmentation is not None:
-            self.augmentations = self._parse_augment_config(augmentation)
+            self.augmentations = Compose(self._parse_augment_config(augmentation))
         else:
-            self.augmentations = []
+            self.augmentations = None
 
-    def __len__(self):
+        # custom dataset class for nuScenes dataset, init super with None
+        super().__init__(
+            root=data_root, transform=None, pre_transform=None, pre_filter=None
+        )
+    @property
+    def processed_dir(self):
+        """Return the processed directory."""
+        return str(pathlib.Path(self.data_root) / f"processed_{self.mode}")
+    
+    @property
+    def num_classes(self):
+        """Return the number of classes in the dataset."""
+        return self.num_class
+
+    def len(self):
         """Return the number of samples in the dataset under mode train, val or test."""
         return len(self.sample_tokens)
 
-    def __getitem__(self, idx):
-        """Return a sample from the dataset.
+    @property
+    def raw_file_names(self):
+        """Return the raw file names.
+
+        Implemented to skip download.
+        Returns:
+            list: empty list
+        """
+        return []
+
+    @property
+    def processed_file_names(self):
+        """Return the processed file names.
+
+        These files must be present in the processed directory in order to skip
+        the processing of the raw data.
+
+        Returns:
+            list: empty list
+        """
+        # figure out the number of digits in the length of the dataset
+        n_digits = len(str(self.len()))
+        return [f"data_{i+1:0{n_digits}d}.pt" for i in range(self.len())]
+
+    def download(self):
+        """Download the dataset.
+
+        Not needed for nuScenes dataset.
+        """
+        pass
+
+    def process(self):
+        """Process raw data from NuScenes dataset and save to disk."""
+        processed_dir = pathlib.Path(self.processed_dir)
+
+        def _process(sample_token, fn):
+            sample = self.nusc.get("sample", sample_token)
+            gt_boxes = self._get_gt_boxes_from_sample(sample=sample)
+            points, sensor_loc = self._get_lidar_pts_singlesweep(sample=sample)
+
+            # apply preprocessings
+            for pre in self.preprocesses:
+                pre : PreprocessPointCloud
+                pre.preprocess(points)
+
+            # create torch geometric data from points
+            data = Data(
+                x=torch.from_numpy(points.points[3:,].T).float(),  # features
+                pos=torch.from_numpy(points.points[:3, :].T).float(),  # position
+                gt_boxes=gt_boxes,  # custom keyword attribute
+                sensor_loc=torch.from_numpy(sensor_loc).float(),
+            )
+
+            # save to disk
+            torch.save(data, processed_dir / fn)
+
+        for i, (sample_token, fn) in enumerate(
+            tqdm(zip(self.sample_tokens, self.processed_file_names),total=self.len())
+        ):
+            _process(sample_token, fn)
+
+    def get(self, idx):
+        """Load a torch geometric data object from disk.
 
         Args:
             idx (int): index of the sample
 
         Returns:
-            dict: dictionary of sample data
+            Data: torch geometric data object
         """
-        sample_token = self.sample_tokens[idx]
-        sample = self.nusc.get("sample", sample_token)
-        gt_boxes = self._get_gt_boxes_from_sample(sample=sample)
-        points, sensor_loc = self._get_lidar_pts_singlesweep(sample=sample)
-
-        # apply preprocessings
-        for pre in self.preprocesses:
-            pre(points)
-
-        # apply augmentations
-        kwargs = {"sensor_loc": sensor_loc}
-        for aug in self.augmentations:
-            aug(points,gt_boxes, **kwargs)
-
-        # compute localization regression target
-        loc_regression_target, positive_mask = self._compute_loc_regression_target(
-            gt_boxes, points
+        data = torch.load(
+            pathlib.Path(self.processed_dir) / self.processed_file_names[idx],
         )
 
-        # convert to tensor
-        points_tensor = torch.from_numpy(points.points.T).float()
-        loc_regression_target_tensor = torch.from_numpy(loc_regression_target).float()
-        positive_mask_tensor = torch.from_numpy(positive_mask).bool()
+        # do augmentations on the data
+        if self.augmentations is not None:
+            data = self.augmentations(data)
+        return data
 
-        return {
-            "points": points_tensor,
-            "loc_regression_target": loc_regression_target_tensor,
-            "positive_mask": positive_mask_tensor,
-        }
 
     def _parse_augment_config(self, augment_config: list):
         """Parse the augmentation configuration.
@@ -150,7 +207,7 @@ class NuScenesDataset(data.Dataset):
             aug_method = AugmentRegistry.REGISTRY[aug_name]
             augmentations.append(aug_method(**aug_cfg["kwargs"]))
         return augmentations
-    
+
     def _parse_preprocess_config(self, preprocess_config: list):
         """Parse the preprocessing configuration.
 
@@ -221,7 +278,7 @@ class NuScenesDataset(data.Dataset):
         category_list = []
         for config in anchor_box_config:
             w, l, h = config["wlh"]
-            bbox = BoundingBox3D(0., 0., 0., w, l, h, 0.)
+            bbox = BoundingBox3D(0.0, 0.0, 0.0, w, l, h, 0.0)
             bbox.name = config["class"]
             anchor_boxes.append(bbox)
             category_list.append(config["class"])
@@ -229,7 +286,7 @@ class NuScenesDataset(data.Dataset):
 
     def _get_average_anchor_box(self):
         """Get the average of anchor boxes."""
-        avg_box = BoundingBox3D(0., 0., 0., 0., 0., 0., 0.)
+        avg_box = BoundingBox3D(0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
         for box in self.anchor_boxes:
             avg_box.l += box.l
             avg_box.w += box.w
@@ -315,7 +372,7 @@ class NuScenesDataset(data.Dataset):
 
     def _get_gt_boxes_from_sample(
         self, sample_token: str = "", sample: Union[dict, None] = None, render=False
-    ) -> List[dict]:
+    ) -> List[BoundingBox3D]:
         """Get the ground truth bounding boxes in a sample.
 
         Args:
@@ -340,8 +397,12 @@ class NuScenesDataset(data.Dataset):
             if in_category:
                 gt_box = BoundingBox3D.from_nuscene_box(boxes[k])
 
-                if gt_box.x>=self.x_range[0] and gt_box.x<=self.x_range[1] and \
-                    gt_box.y>=self.y_range[0] and gt_box.y<=self.y_range[1]:
+                if (
+                    gt_box.x >= self.x_range[0]
+                    and gt_box.x <= self.x_range[1]
+                    and gt_box.y >= self.y_range[0]
+                    and gt_box.y <= self.y_range[1]
+                ):
                     pass
                 else:
                     continue
@@ -358,10 +419,10 @@ class NuScenesDataset(data.Dataset):
                     self.nusc.render_annotation(ann_token)
                     plt.show()
                     print(gt_boxes[-1])
-        
-        if len(gt_boxes)>0:
+
+        if len(gt_boxes) > 0:
             # sort the boxes by distance to the origin
-            gt_boxes = sorted(gt_boxes, key=lambda b: b.x**2 + b.y**2) 
+            gt_boxes = sorted(gt_boxes, key=lambda b: b.x**2 + b.y**2)
 
         return gt_boxes
 
@@ -453,6 +514,8 @@ class NuScenesDataset(data.Dataset):
         positive_mask = np.zeros(n, dtype=bool)
         for gt_box in gt_boxes:
             mask = gt_box.within_gt_box(points.points[:3, :].T)
+
+            print(np.sum(mask))
 
             # compute localization regression target for each point within the gt box
             encode_loc_reg_target(
