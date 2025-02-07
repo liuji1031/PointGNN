@@ -52,73 +52,198 @@ Dataset:
       - class: vehicle.trailer
         wlh: [2.3,10.0,3.7]
 
-VoxelDownsample:
-  x_range: [-40.0, 40.0]
-  y_range: [-40.0, 40.0]
-  z_range: [-1.0,3.0]
-  voxel_size:
-    x: 0.2
-    y: 0.2
-    z: 0.2
-
-GNNLayers:
-  - name: GNN_layer_1
-    mlp_h:
-      dim_lst: [64, 64]
-      activation: relu
-      output_activation: none
-      add_batch_norm: True
-    mlp_f:
-      feat_dim: 32
-      hidden_dim_lst: [32, 32]
-      activation: relu
-      output_activation: none
-      add_batch_norm: True
-    mlp_g:
-      dim_lst: [64, 64]
-      activation: relu
-      output_activation: none
-      add_batch_norm: True
-  - name: GNN_layer_2
-    mlp_h:
-      dim_lst: [64, 64]
-      activation: relu
-      output_activation: none
-      add_batch_norm: True
-    mlp_f:
-      feat_dim: 32
-      hidden_dim_lst: [32, 32]
-      activation: relu
-      output_activation: none
-      add_batch_norm: True
-    mlp_g:
-      dim_lst: [64, 64]
-      activation: relu
-      output_activation: none
-      add_batch_norm: True
-
-BackgroundClassificationHead:
-  mlp:
-    dim_lst: [64, 64, 2] # binary classification, background or foreground 
+ModuleDefault:
+  point_feat_dim: &point_feat_dim 256
+  edge_feat_dim: &edge_feat_dim 256
+  mlp_h_default: &mlp_h_default
+    inp_dim: *point_feat_dim
+    hidden_dim_lst: [64,16]
+    out_dim: 3 # has to be 3 for delta pos
     activation: relu
     output_activation: none
-    add_batch_norm: True
-
-ObjectClassificationHead:
-  mlp:
-    dim_lst: [64, 64, *num_class] # 6 classes in nuscenes
+    add_batch_norm: true
+    return_dict: false
+  mlp_f_default: &mlp_f_default
+    inp_dim : *point_feat_dim # dim of 3 for pos offset is added in the model init
+    hidden_dim_lst : [256]
+    out_dim : *edge_feat_dim
+    activation : relu
+    output_activation : none
+    add_batch_norm : true
+    return_dict: false
+  mlp_g_default: &mlp_g_default
+    inp_dim: *edge_feat_dim
+    hidden_dim_lst: [256]
+    out_dim: *point_feat_dim
     activation: relu
     output_activation: none
-    add_batch_norm: True
+    add_batch_norm: true
+    return_dict: false
+  return_dict: &return_dict true
 
-LocalizationHead: # regress bounding boxes, one head for each foreground class
-  - vehicles:
-      mlp:
-        dim_lst: [64, 64, 7] # 7 delta values for x, y, z, l, w, h, theta
+Modules:
+  - name: entry
+    cls: entry
+    inp_src:
+      x: arg1
+      pos: arg2
+      edge_index: arg3
+      # batch: arg4 # batch info is not needed
+  - name: point_net_encoder
+    cls: point_net_encoder
+    inp_src:
+      x: "entry:x"
+      pos: "entry:pos"
+      edge_index: "entry:edge_index"
+    out_varname: ["x"]
+    build_cfg:
+      local_nn: # mlp
+        inp_dim: 1 # initial lidar feature dim (reflectance) is 1. dim of 3 for pos is added in the model init
+        hidden_dim_lst: [4,16,64]
+        out_dim: &local_nn_dout 256
         activation: relu
         output_activation: none
-  - human:
-      mlp:
-        dim_lst: [64, 64, 7] # 7 delta values for x, y, z, l, w, h, theta
+        add_batch_norm: True
+        return_dict: False
+      global_nn: # mlp
+        inp_dim: *local_nn_dout
+        hidden_dim_lst: [256,256]
+        out_dim: *point_feat_dim
         activation: relu
         output_activation: none
+        add_batch_norm: True
+        return_dict: False
+      return_dict: *return_dict
+  - name: point_gnn_l1
+    cls: point_gnn_layer
+    inp_src: 
+      x: "point_net_encoder:x"
+      pos: "entry:pos"
+      edge_index: "entry:edge_index"
+    out_varname: ["x"]
+    build_cfg:
+      mlp_h: *mlp_h_default
+      mlp_f: *mlp_f_default
+      mlp_g: *mlp_g_default
+      return_dict: *return_dict
+  - name: point_gnn_l2
+    cls: point_gnn_layer
+    inp_src: 
+      x: "point_gnn_l1:x"
+      pos: "entry:pos"
+      edge_index: "entry:edge_index"
+    out_varname: ["x"]
+    build_cfg:
+      mlp_h: *mlp_h_default
+      mlp_f: *mlp_f_default
+      mlp_g: *mlp_g_default
+      return_dict: *return_dict
+  - name: point_gnn_l3
+    cls: point_gnn_layer
+    inp_src: 
+      x: "point_gnn_l2:x"
+      pos: "entry:pos"
+      edge_index: "entry:edge_index"
+    out_varname: ["x"]
+    build_cfg:
+      mlp_h: *mlp_h_default
+      mlp_f: *mlp_f_default
+      mlp_g: *mlp_g_default
+      return_dict: *return_dict
+  - name: shared_mlp
+    cls: mlp
+    inp_src:
+      x: "point_gnn_l3:x"
+    out_varname: ["x"]
+    build_cfg:
+      inp_dim: *point_feat_dim
+      hidden_dim_lst: [256,256]
+      out_dim: &shared_dout 256
+      activation: relu
+      output_activation: relu
+      add_batch_norm: true
+      return_dict: true
+  - name: background_class_head
+    cls: background_class_head
+    inp_src:
+      x: "shared_mlp:x"
+    out_varname: ["x"]
+    build_cfg:
+      inp_dim: *shared_dout
+      hidden_dim_lst: [128,64]
+      out_dim: 2
+      activation: relu
+      output_activation: none
+      add_batch_norm: True
+      return_dict: True
+      output_format: log_softmax
+  - name: object_class_head
+    cls: object_class_head
+    inp_src:
+      x: "shared_mlp:x"
+    out_varname: ["x"]
+    build_cfg:
+      inp_dim: *shared_dout
+      hidden_dim_lst: [128,64]
+      out_dim: *num_class
+      activation: relu
+      output_activation: none
+      add_batch_norm: True
+      return_dict: True
+      output_format: log_softmax
+  - name: box_size_head
+    cls: box_size_head
+    inp_src:
+      x: "shared_mlp:x"
+    out_varname: ["x"]
+    build_cfg:
+      inp_dim: *shared_dout
+      hidden_dim_lst: [128,64]
+      out_dim: 3
+      activation: relu
+      output_activation: relu
+      add_batch_norm: True
+      return_dict: True
+  - name: localization_head
+    cls: localization_head
+    inp_src:
+      x: "point_gnn_l3:x"
+    out_varname: ["x"]
+    build_cfg:
+      inp_dim: *point_feat_dim
+      hidden_dim_lst: [256,256]
+      out_dim: 3 # only for delta x,y,z
+      activation: relu
+      output_activation: none
+      add_batch_norm: True
+      return_dict: True
+  - name: orientation_head
+    cls: orientation_head
+    inp_src:
+      x: "point_gnn_l3:x"
+    out_varname: ["x"]
+    build_cfg:
+      inp_dim: *point_feat_dim
+      hidden_dim_lst: [128,64]
+      out_dim: 1
+      activation: relu
+      output_activation: none
+      add_batch_norm: True
+      return_dict: True
+      clip_output: [-1., 1.]
+  - name: exit
+    cls: exit
+    inp_src:
+      background: "background_class_head:x"
+      object: "object_class_head:x"
+      box_size: "box_size_head:x"
+      localization: "localization_head:x"
+      orientation: "orientation_head:x"
+
+Optimizer:
+  name: Adam
+  lr: 0.001
+  weight_decay: 0.0001
+  betas: [0.9, 0.999]
+  eps: 1e-08
+  amsgrad: False
