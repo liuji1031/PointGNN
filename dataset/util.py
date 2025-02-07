@@ -5,7 +5,7 @@ import torch
 from einops import rearrange
 from nuscenes.utils.data_classes import LidarPointCloud
 
-from bbox import BoundingBox3D
+from dataset.bbox import BoundingBox3D
 
 
 def encode_loc_reg_target(

@@ -1,4 +1,3 @@
-import multiprocessing as mp
 import os
 import pathlib
 from typing import List, Tuple, Union
@@ -14,7 +13,7 @@ from torch_geometric.data import Data, Dataset
 from torch_geometric.transforms import Compose
 from tqdm import tqdm
 
-from bbox import BoundingBox3D
+from dataset.bbox import BoundingBox3D
 from dataset.augment import AugmentRegistry
 from dataset.preprocess import PreprocessPointCloud, PreprocessRegistry
 from dataset.util import encode_loc_reg_target

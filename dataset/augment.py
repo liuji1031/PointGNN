@@ -5,7 +5,7 @@ from pyquaternion import Quaternion
 from nuscenes.utils.data_classes import LidarPointCloud
 from torch_geometric.data import Data
 from torch_geometric.transforms import BaseTransform
-from bbox import BoundingBox3D
+from dataset.bbox import BoundingBox3D
 from util import camel_to_snake
 
 class AugmentRegistry():
