@@ -18,6 +18,7 @@ from bbox import BoundingBox3D
 from dataset.augment import AugmentRegistry
 from dataset.preprocess import PreprocessPointCloud, PreprocessRegistry
 from dataset.util import encode_loc_reg_target
+from dataset.graph import GraphGenFactory
 
 
 class NuScenesDataset(Dataset):
@@ -31,9 +32,11 @@ class NuScenesDataset(Dataset):
         y_range=(-40, 40),
         z_range=(-1, 8),
         train_val_test_split=(0.8, 0.1, 0.1),
+        device="cuda",
         seed=0,
         preprocess=None,
         augmentation=None,
+        graph_gen_cfg=None,
         anchor_box=None,
         verbose=False,
         **kwargs,
@@ -47,6 +50,7 @@ class NuScenesDataset(Dataset):
         self.x_range = x_range
         self.y_range = y_range
         self.z_range = z_range
+        self.device = device
         self.nusc = NuScenes(version=version, dataroot=data_root, verbose=verbose)
         self.scenes = self.nusc.scene
         self.sample_tokens_by_scene = self._get_sample_tokens_by_scene()
@@ -92,6 +96,7 @@ class NuScenesDataset(Dataset):
         else:
             self.augmentations = None
 
+        self.graph_gen_fcn = GraphGenFactory.build(graph_gen_cfg["name"], graph_gen_cfg["config"])
         # custom dataset class for nuScenes dataset, init super with None
         super().__init__(
             root=data_root, transform=None, pre_transform=None, pre_filter=None
@@ -198,6 +203,10 @@ class NuScenesDataset(Dataset):
         data.reg_r = reg_r
         data.positive_mask = positive_mask
         data.obj_cls_label = obj_cls_label
+
+        # build graph
+        data = self.graph_gen_fcn(data)
+        data = data.to(self.device)
         return data
 
     def _parse_augment_config(self, augment_config: list):

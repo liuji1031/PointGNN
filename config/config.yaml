@@ -1,3 +1,16 @@
+GraphGenConfig:
+  - radius: &radius_graph_gen_config
+      name: radius
+      config:
+        r: 3.0
+        loop: false
+        max_num_neighbors: 16
+  - knn: &knn_graph_gen_config
+      name: knn
+      config:
+        k: 10
+        loop: false
+
 Dataset:
   nuscenes:
     data_root: /home/ji-liu/Robotics/NuScenes/NuScenes_mini
@@ -8,6 +21,8 @@ Dataset:
     x_range: &x_range [-40.0, 40.0] 
     y_range: &y_range [-40.0, 40.0]
     z_range: &z_range [-1.0, 8.0]
+    device: cuda
+    graph_gen_cfg: *radius_graph_gen_config
     preprocess:
     - name: ground_removal_ransac
       kwargs:
