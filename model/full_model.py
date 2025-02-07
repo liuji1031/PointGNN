@@ -11,7 +11,7 @@ class FullModel(torch.nn.Module):
     def __init__(self, model_name, config):
         super().__init__()
         self.model_name = model_name
-        self._module_dict = {}
+        self._module_info = {}
         self._inp_num = {}
         self._module_output = {}
         self._des = {}
@@ -40,21 +40,20 @@ class FullModel(torch.nn.Module):
         """
         module_name = module_config["name"]
         cls_name = module_config["cls"]
-        self._module_dict[module_name] = {}
+        self._module_info[module_name] = {}
         if cls_name not in ["entry", "exit"]:
             assert cls_name in ModuleRegistry.REGISTRY, (
                 f"Module class {cls_name} not found"
             )
-
-            # build the module
-            self._module_dict[module_name]["module"] = ModuleRegistry.REGISTRY[cls_name](
+            module = ModuleRegistry.REGISTRY[cls_name](
                 **module_config["build_cfg"]
             )
-        else:
-            self._module_dict[module_name]["module"] = None
-        self._module_dict[module_name]["inp_src"] = module_config["inp_src"]
+            # build the module
+            self.register_module(module_name, module)
+
+        self._module_info[module_name]["inp_src"] = module_config["inp_src"]
         if not module_name.startswith("entry") and not module_name.startswith("exit"):
-            self._module_dict[module_name]["out_varname"] = module_config["out_varname"]
+            self._module_info[module_name]["out_varname"] = module_config["out_varname"]
         self._inp_num[module_name] = len(module_config["inp_src"])
 
         for des, src in module_config["inp_src"].items():
@@ -71,7 +70,7 @@ class FullModel(torch.nn.Module):
     def _init_inp_cntr(self):
         """Build input dictionary for each module."""
         inp_cntr = {}
-        for module_name, _ in self._module_dict.items():
+        for module_name, _ in self._module_info.items():
             inp_cntr[module_name] = 0
         return inp_cntr
 
@@ -95,19 +94,19 @@ class FullModel(torch.nn.Module):
         """
         out = {}
         module_name = self._entrypoint
-        for arg, des in zip(args, self._module_dict[module_name]["inp_src"].keys()):
+        for arg, des in zip(args, self._module_info[module_name]["inp_src"].keys()):
             out[f"{des}"] = arg
         return out
 
-    def to_device(self, device):
-        """Move the model to a specific device.
+    # def to_device(self, device):
+    #     """Move the model to a specific device.
 
-        Args:
-            device (torch.device): device to move the model to
-        """
-        for _, module in self._module_dict.items():
-            if module["module"] is not None:
-                module["module"] = module["module"].to(device)
+    #     Args:
+    #         device (torch.device): device to move the model to
+    #     """
+    #     for _, module in self._module_info.items():
+    #         if module["module"] is not None:
+    #             module["module"] = module["module"].to(device)
 
     def forward(self,*args):
         """Forward pass of the model.
@@ -119,13 +118,13 @@ class FullModel(torch.nn.Module):
             torch.Tensor: output tensor
         """
         # x, pos, edge_index = args
-        # point_net_encoder = self._module_dict["point_net_encoder"]["module"]
+        # point_net_encoder = self._module_info["point_net_encoder"]["module"]
         # x = point_net_encoder(x, pos, edge_index)
-        # point_gnn_l1 = self._module_dict["point_gnn_l1"]["module"]
+        # point_gnn_l1 = self._module_info["point_gnn_l1"]["module"]
         # x = point_gnn_l1(x, pos, edge_index)
-        # point_gnn_l2 = self._module_dict["point_gnn_l2"]["module"]
+        # point_gnn_l2 = self._module_info["point_gnn_l2"]["module"]
         # x = point_gnn_l2(x, pos, edge_index)
-        # point_gnn_l3 = self._module_dict["point_gnn_l3"]["module"]
+        # point_gnn_l3 = self._module_info["point_gnn_l3"]["module"]
         # x = point_gnn_l3(x, pos, edge_index)
         # return x
 
@@ -141,14 +140,14 @@ class FullModel(torch.nn.Module):
             # any module in the queue must already have all inputs ready
             module_name = operation_queue.pop(0)
             # logger.debug(f"Processing module {module_name}")
-            module = self._module_dict[module_name]["module"]
-            # out_varname = self._module_dict[module_name]["out_varname"]
+            module = self._modules[module_name]
+            # out_varname = self._module_info[module_name]["out_varname"]
 
             # out is a dictionary of output, example: {"x": tensor}
             if not module_name.startswith("entry"):
                 # construct input dictionary for the module
                 inp = {}
-                for des, src in self._module_dict[module_name]["inp_src"].items():
+                for des, src in self._module_info[module_name]["inp_src"].items():
                     # assert src in module_output, f"Missing output from {src}"
                     inp[des] = module_output[src]
                 # call the module with kwargs
@@ -178,7 +177,7 @@ class FullModel(torch.nn.Module):
                         operation_queue.append(des_module_name)
 
         final_output = {}
-        for varname, src in self._module_dict[self._exitpoint]["inp_src"].items():
+        for varname, src in self._module_info[self._exitpoint]["inp_src"].items():
             final_output[varname] = module_output[src]
 
         return final_output

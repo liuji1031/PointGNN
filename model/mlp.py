@@ -2,10 +2,10 @@ import typing
 import torch
 from torch.nn import Linear
 
-from model.registry import ModuleRegistry
+from model.registry import Module
 from config.activations import activation_dict
 
-class Mlp(torch.nn.Module, ModuleRegistry):
+class Mlp(Module):
     """multi-layer perceptron
 
     Args:
@@ -18,7 +18,8 @@ class Mlp(torch.nn.Module, ModuleRegistry):
                  activation : str = "relu",
                  output_activation : str = "none",
                  add_batch_norm : bool = False,
-                 return_dict : bool = False):
+                 return_dict : bool = False,
+                 **kwargs):
         """_summary_
 
         Args:
@@ -31,7 +32,7 @@ class Mlp(torch.nn.Module, ModuleRegistry):
             add_batch_norm (bool, optional): whether to add batch normalization
             return_dict (bool, optional): whether to return the output as a dict
         """
-        super().__init__()
+        super().__init__(return_dict=return_dict)
         layers = []
         in_dims = [inp_dim] + hidden_dim_lst
         out_dims = hidden_dim_lst + [out_dim]
@@ -49,7 +50,6 @@ class Mlp(torch.nn.Module, ModuleRegistry):
                 layers.append(torch.nn.BatchNorm1d(out_dims[i]))
 
         self.mlp = torch.nn.Sequential(*layers)
-        self.return_dict = return_dict
     
     def forward(self, x):
         if self.return_dict:
