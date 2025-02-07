@@ -1,22 +1,22 @@
+import multiprocessing as mp
 import os
+import pathlib
 from typing import List, Tuple, Union
 
 import matplotlib.pyplot as plt
 import numpy as np
-import pathlib
-import multiprocessing as mp
 import torch
-from tqdm import tqdm
-from torch_geometric.data import Data, Dataset
-from torch_geometric.transforms import Compose
 from nuscenes.nuscenes import NuScenes
 from nuscenes.utils.data_classes import Box, LidarPointCloud
 from nuscenes.utils.geometry_utils import transform_matrix
 from pyquaternion import Quaternion
+from torch_geometric.data import Data, Dataset
+from torch_geometric.transforms import Compose
+from tqdm import tqdm
 
 from bbox import BoundingBox3D
 from dataset.augment import AugmentRegistry
-from dataset.preprocess import PreprocessRegistry, PreprocessPointCloud
+from dataset.preprocess import PreprocessPointCloud, PreprocessRegistry
 from dataset.util import encode_loc_reg_target
 
 
@@ -96,11 +96,12 @@ class NuScenesDataset(Dataset):
         super().__init__(
             root=data_root, transform=None, pre_transform=None, pre_filter=None
         )
+
     @property
     def processed_dir(self):
         """Return the processed directory."""
         return str(pathlib.Path(self.data_root) / f"processed_{self.mode}")
-    
+
     @property
     def num_classes(self):
         """Return the number of classes in the dataset."""
@@ -132,7 +133,7 @@ class NuScenesDataset(Dataset):
         """
         # figure out the number of digits in the length of the dataset
         n_digits = len(str(self.len()))
-        return [f"data_{i+1:0{n_digits}d}.pt" for i in range(self.len())]
+        return [f"data_{i + 1:0{n_digits}d}.pt" for i in range(self.len())]
 
     def download(self):
         """Download the dataset.
@@ -152,7 +153,7 @@ class NuScenesDataset(Dataset):
 
             # apply preprocessings
             for pre in self.preprocesses:
-                pre : PreprocessPointCloud
+                pre: PreprocessPointCloud
                 pre.preprocess(points)
 
             # create torch geometric data from points
@@ -167,7 +168,7 @@ class NuScenesDataset(Dataset):
             torch.save(data, processed_dir / fn)
 
         for i, (sample_token, fn) in enumerate(
-            tqdm(zip(self.sample_tokens, self.processed_file_names),total=self.len())
+            tqdm(zip(self.sample_tokens, self.processed_file_names), total=self.len())
         ):
             _process(sample_token, fn)
 
@@ -187,8 +188,17 @@ class NuScenesDataset(Dataset):
         # do augmentations on the data
         if self.augmentations is not None:
             data = self.augmentations(data)
-        return data
 
+        # compute localization regression target
+        reg_xyz,reg_lwh,reg_r,positive_mask,obj_cls_label = self._compute_loc_regression_target(
+            data.gt_boxes, data.pos
+        )
+        data.reg_xyz = reg_xyz
+        data.reg_lwh = reg_lwh
+        data.reg_r = reg_r
+        data.positive_mask = positive_mask
+        data.obj_cls_label = obj_cls_label
+        return data
 
     def _parse_augment_config(self, augment_config: list):
         """Parse the augmentation configuration.
@@ -499,7 +509,7 @@ class NuScenesDataset(Dataset):
         return pc, sensor_loc
 
     def _compute_loc_regression_target(
-        self, gt_boxes: List[BoundingBox3D], points: LidarPointCloud
+        self, gt_boxes: List[BoundingBox3D], pos: torch.Tensor
     ):
         """Compute the regression target for localization head.
 
@@ -509,26 +519,28 @@ class NuScenesDataset(Dataset):
         Returns:
             np.ndarray: 1D array of labels
         """
-        n = points.nbr_points()
-        loc_regression_target = np.zeros((n, 7), dtype=np.float32)
-        positive_mask = np.zeros(n, dtype=bool)
+        n = pos.shape[0]
+        positive_mask = torch.from_numpy(np.zeros(n, dtype=bool))
+        box_xyz = torch.from_numpy(np.zeros((n, 3), dtype=np.float32))
+        box_lwh = torch.from_numpy(np.zeros((n, 3), dtype=np.float32))
+        box_r = torch.from_numpy(np.zeros((n, 1), dtype=np.float32))
+        positive_mask = torch.from_numpy(np.zeros(n, dtype=bool))
+        obj_cls_label = torch.from_numpy(np.zeros(n, dtype=np.int64))
         for gt_box in gt_boxes:
-            mask = gt_box.within_gt_box(points.points[:3, :].T)
-
-            print(np.sum(mask))
-
-            # compute localization regression target for each point within the gt box
-            encode_loc_reg_target(
-                reg_target=loc_regression_target,
-                box_xyz=gt_box.xyz_np,
-                box_lhw=gt_box.lwh_np,
-                box_r=gt_box.r_np,
-                ref_box=self.avg_anchor_box,
-                points=points,
-                mask=mask,
-            )
-
-            # add to the positive mask
+            mask = gt_box.within_gt_box(pos.numpy())
+            box_xyz[mask, :] = gt_box.xyz_tensor.to(torch.float32)
+            box_lwh[mask, :] = gt_box.lwh_tensor.to(torch.float32)
+            box_r[mask, :] = gt_box.r_tensor.to(torch.float32)
             positive_mask[mask] = True
+            obj_cls_label[mask] = gt_box.label
 
-        return loc_regression_target, positive_mask
+        # compute localization regression target for each point within the gt box
+        reg_xyz, reg_lwh, reg_r = encode_loc_reg_target(
+            box_xyz=box_xyz,
+            box_lwh=box_lwh,
+            box_r=box_r,
+            ref_box_lwh=self.avg_anchor_box.lwh_tensor,
+            pos=pos,
+        )
+
+        return reg_xyz, reg_lwh, reg_r, positive_mask, obj_cls_label
