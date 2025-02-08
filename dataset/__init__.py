@@ -1,3 +1,3 @@
-from dataset.dataset import NuScenesDataset
+from dataset.dataset import DatasetRegistry
 
-__all__ = ["NuScenesDataset"]
+__all__ = ["DatasetRegistry"]

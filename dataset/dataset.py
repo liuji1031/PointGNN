@@ -20,6 +20,42 @@ from dataset.util import encode_loc_reg_target
 from dataset.graph import GraphGenFactory
 
 
+class DatasetRegistry:
+    REGISTRY = {}
+
+    @classmethod
+    def register(cls, name: str):
+        """Register the class to the registry.
+
+        Args:
+            name (str): name of the class
+        """
+
+        def decorator(subclass):
+            if name in cls.REGISTRY:
+                raise ValueError(f"Duplicate class name {name}")
+            cls.REGISTRY[name] = subclass
+            return subclass
+
+        return decorator
+
+    @classmethod
+    def build(cls, mode: str, name: str, config: dict):
+        """Build dataset object from the registry.
+
+        Args:
+            name (str): name of the class
+            mode (str): mode of the dataset, i.e., train, val, or test
+            config (dict): configuration of the dataset
+
+        Returns:
+            dataset object
+        """
+        assert name in cls.REGISTRY, f"Unknown dataset {name}"
+        return cls.REGISTRY[name](mode=mode, **config)
+
+
+@DatasetRegistry.register("nuscenes")
 class NuScenesDataset(Dataset):
     def __init__(
         self,
@@ -95,7 +131,9 @@ class NuScenesDataset(Dataset):
         else:
             self.augmentations = None
 
-        self.graph_gen_fcn = GraphGenFactory.build(graph_gen_cfg["name"], graph_gen_cfg["config"])
+        self.graph_gen_fcn = GraphGenFactory.build(
+            graph_gen_cfg["name"], graph_gen_cfg["config"]
+        )
         # custom dataset class for nuScenes dataset, init super with None
         super().__init__(
             root=data_root, transform=None, pre_transform=None, pre_filter=None
@@ -194,8 +232,8 @@ class NuScenesDataset(Dataset):
             data = self.augmentations(data)
 
         # compute localization regression target
-        reg_xyz,reg_lwh,reg_r,positive_mask,obj_cls_label = self._compute_loc_regression_target(
-            data.gt_boxes, data.pos
+        reg_xyz, reg_lwh, reg_r, positive_mask, obj_cls_label = (
+            self._compute_loc_regression_target(data.gt_boxes, data.pos)
         )
         data.reg_xyz = reg_xyz
         data.reg_lwh = reg_lwh
@@ -219,11 +257,10 @@ class NuScenesDataset(Dataset):
         """
         augmentations = []
         for aug_cfg in augment_config:
-            aug_name = aug_cfg["name"]
-            if aug_name not in AugmentRegistry.REGISTRY:
-                raise ValueError(f"Augmentation {aug_name} not found in registry")
-            aug_method = AugmentRegistry.REGISTRY[aug_name]
-            augmentations.append(aug_method(**aug_cfg["kwargs"]))
+            aug_method = AugmentRegistry.build(
+                name=aug_cfg["name"], config=aug_cfg["config"]
+            )
+            augmentations.append(aug_method)
         return augmentations
 
     def _parse_preprocess_config(self, preprocess_config: list):
@@ -237,11 +274,10 @@ class NuScenesDataset(Dataset):
         """
         preprocesses = []
         for pre_cfg in preprocess_config:
-            pre_name = pre_cfg["name"]
-            if pre_name not in PreprocessRegistry.REGISTRY:
-                raise ValueError(f"Preprocessing {pre_name} not found in registry")
-            pre_method = PreprocessRegistry.REGISTRY[pre_name]
-            preprocesses.append(pre_method(**pre_cfg["kwargs"]))
+            pre_method = PreprocessRegistry.build(
+                name=pre_cfg["name"], config=pre_cfg["config"]
+            )
+            preprocesses.append(pre_method)
         return preprocesses
 
     def _parse_category(self):

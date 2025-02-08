@@ -5,15 +5,26 @@ import numpy as np
 from nuscenes.utils.data_classes import LidarPointCloud
 
 from dataset.ground_removal import ground_removal
-from util import camel_to_snake
 
 
 class PreprocessRegistry:
     REGISTRY = {}
 
-    def __init_subclass__(cls, **kwargs):
-        PreprocessRegistry.REGISTRY[camel_to_snake(cls.__name__)] = cls
-        super().__init_subclass__(**kwargs)
+    @classmethod
+    def register(cls, name):
+        def decorator(subclass):
+            if name in cls.REGISTRY:
+                raise ValueError(f"Cannot register duplicate class ({name})")
+            cls.REGISTRY[name] = subclass
+            return subclass
+
+        return decorator
+
+    @classmethod
+    def build(cls, name: str, config: dict):
+        if name not in cls.REGISTRY:
+            raise ValueError(f"Unknown class {name}")
+        return cls.REGISTRY[name](**config)
 
 
 class PreprocessPointCloud(ABC):
@@ -22,7 +33,8 @@ class PreprocessPointCloud(ABC):
         pass
 
 
-class GroundRemovalRANSAC(PreprocessPointCloud, PreprocessRegistry):
+@PreprocessRegistry.register("ground_removal_ransac")
+class GroundRemovalRANSAC(PreprocessPointCloud):
     def __init__(
         self,
         inlier_threshold=0.2,
@@ -51,7 +63,8 @@ class GroundRemovalRANSAC(PreprocessPointCloud, PreprocessRegistry):
         )
 
 
-class VoxelDownsample(PreprocessPointCloud, PreprocessRegistry):
+@PreprocessRegistry.register("voxel_downsample")
+class VoxelDownsample(PreprocessPointCloud):
     """Reduce the number of points by voxelization, i.e., returns the average of
     points in each voxel.
 
@@ -107,7 +120,9 @@ class VoxelDownsample(PreprocessPointCloud, PreprocessRegistry):
         points = points[mask, :]
 
         # compute voxel index
-        coord = ((points[:, :3] - self.lower_limit) / self.voxel_size_xyz).astype(np.int32)
+        coord = ((points[:, :3] - self.lower_limit) / self.voxel_size_xyz).astype(
+            np.int32
+        )
 
         unique_coord, inverse_ind, counts = np.unique(
             coord, return_inverse=True, return_counts=True, axis=0
