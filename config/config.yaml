@@ -1,3 +1,5 @@
+ModelName: PointGNN
+
 GraphGenConfig:
   - radius: &radius_graph_gen_config
       name: radius
@@ -12,7 +14,8 @@ GraphGenConfig:
         loop: false
 
 Dataset:
-  nuscenes:
+  name: nuscenes
+  config:
     data_root: /home/ji-liu/Robotics/NuScenes/NuScenes_mini
     version: v1.0-mini
     num_class: &num_class 6
@@ -25,7 +28,7 @@ Dataset:
     graph_gen_cfg: *radius_graph_gen_config
     preprocess:
     - name: ground_removal_ransac
-      kwargs:
+      config:
         inlier_threshold: 0.2
         sample_size: 8
         max_iterations: 100
@@ -33,7 +36,7 @@ Dataset:
         restrict_range: 50
         inplace: True
     - name: voxel_downsample
-      kwargs:
+      config:
         x_range: *x_range
         y_range: *y_range
         z_range: *z_range
@@ -43,13 +46,13 @@ Dataset:
           z: 0.2
     augmentation:
     - name: random_jitter
-      kwargs:
+      config:
         sigma: 0.05
     - name: random_rotation
-      kwargs:
+      config:
         sigma: 0.3927 # pi/8
     - name: random_flip_y
-      kwargs:
+      config:
         prob: 0.5
     anchor_box:
       - class: vehicle.car
@@ -70,32 +73,33 @@ Dataset:
 ModuleDefault:
   point_feat_dim: &point_feat_dim 256
   edge_feat_dim: &edge_feat_dim 256
-  mlp_h_default: &mlp_h_default
-    inp_dim: *point_feat_dim
-    hidden_dim_lst: [64,16]
-    out_dim: 3 # has to be 3 for delta pos
-    activation: relu
-    output_activation: none
-    add_batch_norm: true
-    return_dict: false
-  mlp_f_default: &mlp_f_default
-    inp_dim : *point_feat_dim # dim of 3 for pos offset is added in the model init
-    hidden_dim_lst : [256]
-    out_dim : *edge_feat_dim
-    activation : relu
-    output_activation : none
-    add_batch_norm : true
-    return_dict: false
-  mlp_g_default: &mlp_g_default
-    inp_dim: *edge_feat_dim
-    hidden_dim_lst: [256]
-    out_dim: *point_feat_dim
-    activation: relu
-    output_activation: none
-    add_batch_norm: true
-    return_dict: false
   return_dict: &return_dict true
-
+  point_gnn_default: &point_gnn_default
+    mlp_h:
+      inp_dim: *point_feat_dim
+      hidden_dim_lst: [64,16]
+      out_dim: 3 # has to be 3 for delta pos
+      activation: relu
+      output_activation: none
+      add_batch_norm: true
+      return_dict: false
+    mlp_f:
+      inp_dim : *point_feat_dim # dim of 3 for pos offset is added in the model init
+      hidden_dim_lst : [256]
+      out_dim : *edge_feat_dim
+      activation : relu
+      output_activation : none
+      add_batch_norm : true
+      return_dict: false
+    mlp_g:
+      inp_dim: *edge_feat_dim
+      hidden_dim_lst: [256]
+      out_dim: *point_feat_dim
+      activation: relu
+      output_activation: none
+      add_batch_norm: true
+      return_dict: false
+    
 Modules:
   - name: entry
     cls: entry
@@ -136,11 +140,7 @@ Modules:
       pos: "entry:pos"
       edge_index: "entry:edge_index"
     out_varname: ["x"]
-    build_cfg:
-      mlp_h: *mlp_h_default
-      mlp_f: *mlp_f_default
-      mlp_g: *mlp_g_default
-      return_dict: *return_dict
+    build_cfg: *point_gnn_default
   - name: point_gnn_l2
     cls: point_gnn_layer
     inp_src: 
@@ -148,11 +148,7 @@ Modules:
       pos: "entry:pos"
       edge_index: "entry:edge_index"
     out_varname: ["x"]
-    build_cfg:
-      mlp_h: *mlp_h_default
-      mlp_f: *mlp_f_default
-      mlp_g: *mlp_g_default
-      return_dict: *return_dict
+    build_cfg: *point_gnn_default
   - name: point_gnn_l3
     cls: point_gnn_layer
     inp_src: 
@@ -160,11 +156,7 @@ Modules:
       pos: "entry:pos"
       edge_index: "entry:edge_index"
     out_varname: ["x"]
-    build_cfg:
-      mlp_h: *mlp_h_default
-      mlp_f: *mlp_f_default
-      mlp_g: *mlp_g_default
-      return_dict: *return_dict
+    build_cfg: *point_gnn_default
   - name: shared_mlp
     cls: mlp
     inp_src:
@@ -255,10 +247,39 @@ Modules:
       localization: "localization_head:x"
       orientation: "orientation_head:x"
 
+Loss:
+  config:
+    background_weights: [0.5, 1.0] # [background, object]
+    object_weights: [1.0, 1.0, 1.0, 1.0, 1.0, 1.0] # [car, truck, bus, construction, bicycle, motorcycle, trailor]
+    loss_coef:
+      background: 1.0
+      object: 1.0
+      box_size: 1.0
+      localization: 1.0
+      orientation: 1.0
+
 Optimizer:
-  name: Adam
-  lr: 0.001
-  weight_decay: 0.0001
-  betas: [0.9, 0.999]
-  eps: 1e-08
-  amsgrad: False
+  name: adam
+  config:
+    lr: 0.001
+    weight_decay: 0.0001
+    betas: [0.9, 0.999]
+    eps: 1.0e-8
+    amsgrad: False
+
+Scheduler:
+  name: plateau
+  config:
+    mode: min
+    factor: 0.5
+    patience: 5
+    threshold: 0.01
+    threshold_mode: rel
+    cooldown: 0
+    min_lr: 1.0e-6
+
+Training:
+  mini_batch_size: 4
+  epochs: 100
+  chkpt_path: ./checkpoints
+  log_path: ./logs
