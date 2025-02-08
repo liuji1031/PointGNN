@@ -6,9 +6,9 @@ import torch
 from model.registry import ModuleRegistry
 
 
-class FullModel(torch.nn.Module):
+class ComposableModel(torch.nn.Module):
     """Build full model based on config file."""
-    def __init__(self, model_name, config):
+    def __init__(self, model_name:str, config:dict):
         super().__init__()
         self.model_name = model_name
         self._module_info = {}
@@ -166,7 +166,7 @@ class FullModel(torch.nn.Module):
                 # update input counter for the corresponding destination modules
                 for des in self._des[full_varname]:
                     # example des = "mlp_2:inp1"
-                    des_module_name, des_port = FullModel._parse_pattern(des)
+                    des_module_name, des_port = ComposableModel._parse_pattern(des)
                     inp_cntr[des_module_name] += 1
 
                     if des_module_name == self._exitpoint:

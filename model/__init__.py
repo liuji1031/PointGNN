@@ -1,5 +1,5 @@
 from model.combine import Combine
-from model.full_model import FullModel
+from model.model import ComposableModel
 from model.gnn import PointGnnLayer, PointNetEncoder
 from model.head import (
     BackgroundClassHead,
@@ -10,6 +10,7 @@ from model.head import (
 )
 from model.mlp import Mlp
 from model.registry import ModuleRegistry
+from model.loss import Loss
 
 __all__ = [
     "ModuleRegistry",
@@ -22,5 +23,6 @@ __all__ = [
     "OrientationHead",
     "PointGnnLayer",
     "PointNetEncoder",
-    "FullModel",
+    "ComposableModel",
+    "Loss",
 ]

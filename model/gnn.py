@@ -1,10 +1,8 @@
-import typing
-
 import torch
 from torch_geometric.nn import PointGNNConv, PointNetConv
 
 from model.mlp import Mlp
-from model.registry import Module
+from model.registry import Module, ModuleRegistry
 
 
 class MlpH(Mlp):
@@ -28,7 +26,7 @@ class MlpF(Mlp):
 class MlpG(Mlp):
     """mlp that maps from aggregated edge features to node features"""
 
-
+@ModuleRegistry.register("point_gnn_layer")
 class PointGnnLayer(Module):
     def __init__(
         self,
@@ -73,7 +71,7 @@ class GNN(torch.nn.Module):
             x = layer(x, pos, edge_index)
         return x
 
-
+@ModuleRegistry.register("point_net_encoder")
 class PointNetEncoder(Module):
     def __init__(
         self,

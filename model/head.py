@@ -1,7 +1,9 @@
 import torch
 from torch.nn.functional import softmax, log_softmax
+from model.registry import ModuleRegistry
 from model.mlp import Mlp
 
+@ModuleRegistry.register("classification_head")
 class ClassificationHead(Mlp):
     """ the classification head for predicting the object class of each point.
     returns the logits for each class
@@ -25,6 +27,7 @@ class ClassificationHead(Mlp):
         else:
             return out
 
+@ModuleRegistry.register("background_class_head")
 class BackgroundClassHead(ClassificationHead):
     """ the binary classification head for predicting the background class of each point.
     returns the logits for each class
@@ -34,6 +37,7 @@ class BackgroundClassHead(ClassificationHead):
         assert "out_dim" in kwargs, "out_dim must be specified for BackgroundClassificationHead"
         assert kwargs["out_dim"] == 2, "out_dim must be 2 for BackgroundClassificationHead"
 
+@ModuleRegistry.register("object_class_head")
 class ObjectClassHead(ClassificationHead):
     """ the classification head for predicting the object class of each point.
     returns the logits for each class
@@ -41,6 +45,7 @@ class ObjectClassHead(ClassificationHead):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
 
+@ModuleRegistry.register("box_size_head")
 class BoxSizeHead(Mlp):
     """Regress the delta values for the size of the bounding box.
     """
@@ -50,6 +55,7 @@ class BoxSizeHead(Mlp):
         assert kwargs["out_dim"] == 3, "out_dim must be 3 for BoxSizeHead"
         assert kwargs["output_activation"] != "none", "output_activation cannot be none for BoxSizeHead"
 
+@ModuleRegistry.register("localization_head")
 class LocalizationHead(Mlp):
     """Regress the delta values for the shift in x, y, z for bounding box.
     """
@@ -58,6 +64,7 @@ class LocalizationHead(Mlp):
         assert "out_dim" in kwargs, "out_dim must be specified for LocalizationHead"
         assert kwargs["out_dim"] == 3, "out_dim must be 7 for LocalizationHead"
 
+@ModuleRegistry.register("orientation_head")
 class OrientationHead(Mlp):
     """Regress the orientation of the bounding box.
     """

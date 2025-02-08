@@ -23,7 +23,7 @@ class Loss(torch.nn.Module):
         self.object_loss = NLLLoss(weight=self.object_weights,reduction='none')
 
         self.huber_loss = HuberLoss(reduction='none')
-        self.loss_coeff = kwargs.get('loss_coeff', {'background': 1, 'object': 1, 'xyz': 1, 'lwh': 1, 'r': 1})
+        self.loss_coeff = kwargs.get('loss_coeff', {'background': 1., 'object': 1., 'xyz': 1., 'lwh': 1., 'r': 1.})
 
     def forward(self, background_pred,
                 object_pred, object_target,
@@ -40,7 +40,7 @@ class Loss(torch.nn.Module):
         Returns:
             _type_: _description_
         """
-        background_target = 1-positive_mask.to(torch.int16)
+        background_target = positive_mask.to(torch.int16)
         background_loss = self.background_loss(background_pred, background_target)
 
         object_loss = self.object_loss(object_pred, object_target)

@@ -3,9 +3,9 @@ import typing
 import torch
 from torch.nn import Linear
 
-from model.registry import Module
+from model.registry import Module, ModuleRegistry
 
-
+@ModuleRegistry.register("mlp")
 class Mlp(Module):
     """multi-layer perceptron
 
