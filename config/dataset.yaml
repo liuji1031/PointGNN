@@ -1,0 +1,73 @@
+name: nuscenes
+graph_gen_presets:
+  - radius: &radius_graph_gen_config
+      name: radius
+      config:
+        r: 3.0
+        loop: false
+        max_num_neighbors: 16
+  - knn: &knn_graph_gen_config
+      name: knn
+      config:
+        k: 6
+        loop: false
+config:
+  data_root: /home/ji-liu/Robotics/NuScenes/NuScenes_mini
+  version: v1.0-mini
+  classes:
+    - &car vehicle.car
+    - &truck vehicle.truck
+    - &bus vehicle.bus
+    - &construction vehicle.construction
+    - &bicycle vehicle.bicycle
+    - &motorcycle vehicle.motorcycle
+    - &trailer vehicle.trailer
+  train_val_test_split : [0.8, 0.1, 0.1]
+  x_range: &x_range [-40.0, 40.0] 
+  y_range: &y_range [-40.0, 40.0]
+  z_range: &z_range [-1.0, 8.0]
+  device: cuda
+  graph_gen_cfg: *knn_graph_gen_config
+  preprocess:
+  - name: ground_removal_ransac
+    config:
+      inlier_threshold: 0.2
+      sample_size: 8
+      max_iterations: 100
+      random_seed: 0
+      restrict_range: 50
+      inplace: True
+  - name: voxel_downsample
+    config:
+      x_range: *x_range
+      y_range: *y_range
+      z_range: *z_range
+      voxel_size:
+        x: 0.2
+        y: 0.2
+        z: 0.2
+  augmentation:
+  - name: random_jitter
+    config:
+      sigma: 0.05
+  - name: random_rotation
+    config:
+      sigma: 0.3927 # pi/8
+  - name: random_flip_y
+    config:
+      prob: 0.5
+  anchor_box:
+    - class: *car
+      wlh: [1.9,4.6,1.7]
+    - class: *truck
+      wlh: [2.4,6.5,2.6]
+    - class: *bus
+      wlh: [2.9,10.0,3.5]
+    - class: *construction
+      wlh: [2.6,5.6,2.4]
+    - class: *bicycle
+      wlh: [0.6,1.8,1.4]
+    - class: *motorcycle
+      wlh: [0.68, 1.95, 1.47]
+    - class: *trailer
+      wlh: [2.3,10.0,3.7]
