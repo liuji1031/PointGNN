@@ -2,7 +2,7 @@ import torch
 from torch_geometric.nn import PointGNNConv, PointNetConv
 
 from model.mlp import Mlp
-from model.registry import Module, ModuleRegistry
+from model.registry import NNModule, ModuleRegistry
 
 
 class MlpH(Mlp):
@@ -26,17 +26,17 @@ class MlpF(Mlp):
 class MlpG(Mlp):
     """mlp that maps from aggregated edge features to node features"""
 
+
 @ModuleRegistry.register("point_gnn_layer")
-class PointGnnLayer(Module):
+class PointGnnLayer(NNModule):
     def __init__(
         self,
         mlp_h: dict,
         mlp_f: dict,
         mlp_g: dict,
-        return_dict: bool = True,
         **kwargs,
     ):
-        super().__init__(return_dict=return_dict)
+        super().__init__(**kwargs)
 
         # give the layer a name
         self.name = kwargs.get("name", "PointGnnLayer")
@@ -48,13 +48,9 @@ class PointGnnLayer(Module):
         self.mlpg = MlpG(**mlp_g)
 
         self.conv = PointGNNConv(self.mlph, self.mlpf, self.mlpg)
-        self.return_dict = return_dict
 
     def forward(self, x, pos, edge_index):
-        if not self.return_dict:
-            return self.conv(x, pos, edge_index)
-        else:
-            return {"x": self.conv(x, pos, edge_index)}
+        return self._construct_result(self.conv(x, pos, edge_index))
 
 
 class GNN(torch.nn.Module):
@@ -64,24 +60,25 @@ class GNN(torch.nn.Module):
     ):
         super().__init__()
 
-        self.layers = torch.nn.ModuleList([PointGnnLayer(lc) for lc in layer_configs])
+        self.layers = torch.nn.ModuleList(
+            [PointGnnLayer(lc) for lc in layer_configs]
+        )
 
     def forward(self, x, pos, edge_index):
         for layer in self.layers:
             x = layer(x, pos, edge_index)
         return x
 
+
 @ModuleRegistry.register("point_net_encoder")
-class PointNetEncoder(Module):
+class PointNetEncoder(NNModule):
     def __init__(
         self,
         local_nn: dict,
         global_nn: dict,
-        return_dict: bool = True,
         **kwargs,
     ):
-        super().__init__(return_dict=return_dict)
-        self.name = kwargs.get("name", "PointNetEncoder")
+        super().__init__(**kwargs)
         assert "inp_dim" in local_nn, (
             "Must provide inp_dim for PointNetEncoder local_nn"
         )
@@ -90,11 +87,7 @@ class PointNetEncoder(Module):
         )  # add 3 for the relative position features
         self.local_nn = Mlp(**local_nn)
         self.global_nn = Mlp(**global_nn)
-        self.return_dict = return_dict
         self.conv = PointNetConv(self.local_nn, self.global_nn)
 
     def forward(self, x, pos, edge_index):
-        if self.return_dict:
-            return {"x": self.conv(x, pos, edge_index)}
-        else:
-            return self.conv(x, pos, edge_index)
+        return self._construct_result(self.conv(x, pos, edge_index))

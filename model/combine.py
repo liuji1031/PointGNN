@@ -1,12 +1,11 @@
 import torch
-from torch import jit
-from model.registry import ModuleRegistry
+from model.registry import Module, ModuleRegistry
 
-class Combine(torch.nn.Module, ModuleRegistry):
-    def __init__(self, operation : str, return_dict : bool = False):
-        super(Combine, self).__init__()
+@ModuleRegistry.register("combine")
+class Combine(Module):
+    def __init__(self, operation : str, **kwargs):
+        super().__init__(**kwargs)
         self.operation = operation
-        self.return_dict = return_dict
 
     def forward(self, inp1, inp2):
         if self.operation == 'concat':
@@ -20,7 +19,4 @@ class Combine(torch.nn.Module, ModuleRegistry):
         else:
             raise ValueError(f"Operation {self.operation} not supported")
         
-        if self.return_dict:
-            return {"out": out}
-        else:
-            return out
+        return self._construct_result(out)

@@ -1,34 +1,100 @@
 import sys
-import torch
-sys.path.append('.')
 
-from util import camel_to_snake
+import torch
+
 
 class ModuleRegistry:
     """Register all module classes."""
+
     REGISTRY = {}
-    # def __init_subclass__(cls, **kwargs):
-    #     ModuleRegistry.REGISTRY[camel_to_snake(cls.__name__)] = cls
-    #     super().__init_subclass__(**kwargs)
 
     @classmethod
-    def register(cls, name):
+    def register(cls, subclass_name):
         def decorator(subclass):
-            if name in cls.REGISTRY:
-                raise ValueError(f"Cannot register duplicate class ({name})")
-            cls.REGISTRY[name] = subclass
+            if subclass_name in cls.REGISTRY:
+                raise Warning(f"Overwriting {subclass_name}")
+            cls.REGISTRY[subclass_name] = subclass
             return subclass
-        return decorator
-    
-    @classmethod
-    def build(cls, name, **kwargs):
-        if name not in cls.REGISTRY:
-            raise ValueError(f"Unknown class {name}")
-        return cls.REGISTRY[name](**kwargs)
 
-class Module(torch.nn.Module):
+        return decorator
+
+    @classmethod
+    def build(cls, subclass_name, module_name=None, **kwargs):
+        if subclass_name not in cls.REGISTRY:
+            raise ValueError(f"Unknown class {subclass_name}")
+        module_name = module_name if module_name is not None else subclass_name
+        return cls.REGISTRY[subclass_name](name=module_name, **kwargs)
+
+
+class Module:
     """Base class for all modules."""
-    def __init__(self, **kwargs):
+
+    def __init__(
+        self,
+        name="module",
+        out_varname=None | str | list[str],
+        prefix_module_name=True,
+        **kwargs,
+    ):
         super().__init__()
-        assert "return_dict" in kwargs, "return_dict (bool) must be specified"
-        self.return_dict = kwargs["return_dict"]
+        self.name = name
+        self.out_varname = out_varname
+        self.prefix_module_name = prefix_module_name
+
+
+class NNModule(Module, torch.nn.Module):
+    """Base class for all neural network modules."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        out_varname = kwargs.get("out_varname", None)
+        if out_varname is not None:
+            self.return_dict = True
+            assert isinstance(out_varname, str), (
+                f"out_varname must be a string for {self._get_name()}"
+            )
+        else:
+            self.return_dict = False
+
+    def _construct_result(self, result):
+        if not self.return_dict:
+            return result
+        else:
+            # return as a dictionary otherwise
+            return {f"{self.name}:{self.out_varname}": result}
+
+
+@ModuleRegistry.register("entry")
+class Entry(Module):
+    """Entry point module."""
+
+    def __init__(self, out_varname: list, **kwargs):
+        super().__init__(**kwargs)
+        assert isinstance(out_varname, list), (
+            f"out_varname must be a list for {self._get_name()}"
+        )
+        self.out_varname = out_varname
+
+    def __call__(self, *args):
+        out = {}
+        assert len(args) == len(self.out_varname), (
+            "Number of arguments does not match number of input variables"
+        )
+        for varname, arg in zip(self.out_varname, args):
+            if self.prefix_module_name:
+                key = f"{self.name}:{varname}"
+            else:
+                key = varname
+            out[key] = arg
+
+        return out
+
+
+@ModuleRegistry.register("exit")
+class Exit(Entry):
+    """Exit point module.
+
+    Behaves the same as Entry module.
+    """
+
+    ...

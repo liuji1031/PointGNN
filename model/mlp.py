@@ -3,10 +3,11 @@ import typing
 import torch
 from torch.nn import Linear
 
-from model.registry import Module, ModuleRegistry
+from model.registry import NNModule, ModuleRegistry
+
 
 @ModuleRegistry.register("mlp")
-class Mlp(Module):
+class Mlp(NNModule):
     """multi-layer perceptron
 
     Args:
@@ -27,7 +28,6 @@ class Mlp(Module):
         activation: str = "relu",
         output_activation: str = "none",
         add_batch_norm: bool = False,
-        return_dict: bool = False,
         **kwargs,
     ):
         """_summary_
@@ -42,7 +42,7 @@ class Mlp(Module):
             add_batch_norm (bool, optional): whether to add batch normalization
             return_dict (bool, optional): whether to return the output as a dict
         """
-        super().__init__(return_dict=return_dict)
+        super().__init__(**kwargs)
         layers = []
         in_dims = [inp_dim] + hidden_dim_lst
         out_dims = hidden_dim_lst + [out_dim]
@@ -62,7 +62,4 @@ class Mlp(Module):
         self.mlp = torch.nn.Sequential(*layers)
 
     def forward(self, x):
-        if self.return_dict:
-            return {"x": self.mlp(x)}
-        else:
-            return self.mlp(x)
+        return self._construct_result(self.mlp(x))

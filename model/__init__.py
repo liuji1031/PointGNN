@@ -10,7 +10,7 @@ from model.head import (
 )
 from model.mlp import Mlp
 from model.registry import ModuleRegistry
-from model.loss import Loss
+from model.loss import HuberLoss, NLLLoss, unpack_result
 
 __all__ = [
     "ModuleRegistry",
@@ -24,5 +24,7 @@ __all__ = [
     "PointGnnLayer",
     "PointNetEncoder",
     "ComposableModel",
-    "Loss",
+    "HuberLoss",
+    "NLLLoss",
+    "unpack_result",
 ]
