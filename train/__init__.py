@@ -1,3 +1,3 @@
-from train.optim import Optimization
+from train.optim import Optimization, loop_through_dataset
 
-__all__ = ["Optimization"]
+__all__ = ["Optimization","loop_through_dataset"]
