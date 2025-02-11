@@ -62,7 +62,7 @@ class NuScenesDataset(Dataset):
         data_root,
         version,
         mode,
-        num_class,
+        classes:list,
         x_range=(-40, 40),
         y_range=(-40, 40),
         z_range=(-1, 8),
@@ -81,12 +81,15 @@ class NuScenesDataset(Dataset):
         self.version = version
         self.verbose = verbose
         self.mode = mode
-        self.num_class = num_class
+        self.classes = classes
+        self.num_class = len(classes)
         self.x_range = x_range
         self.y_range = y_range
         self.z_range = z_range
         self.device = device
-        self.nusc = NuScenes(version=version, dataroot=data_root, verbose=verbose)
+        self.nusc = NuScenes(
+            version=version, dataroot=data_root, verbose=verbose
+        )
         self.scenes = self.nusc.scene
         self.sample_tokens_by_scene = self._get_sample_tokens_by_scene()
         self.train_tokens, self.val_tokens, self.test_tokens = (
@@ -100,7 +103,9 @@ class NuScenesDataset(Dataset):
         else:
             self.sample_tokens = self.test_tokens
 
-        self.anchor_boxes, self.category_list = self._gen_anchor_boxes(anchor_box)
+        self.anchor_boxes, self.category_list = self._gen_anchor_boxes(
+            anchor_box
+        )
         # build a dictionary for category and sub-category. example output:
         # {"vehicle": ["car", "truck", "bus"]}
         self.category_dict = self._parse_category()
@@ -127,7 +132,9 @@ class NuScenesDataset(Dataset):
 
         # gather augmentations from the registry
         if augmentation is not None:
-            self.augmentations = Compose(self._parse_augment_config(augmentation))
+            self.augmentations = Compose(
+                self._parse_augment_config(augmentation)
+            )
         else:
             self.augmentations = None
 
@@ -144,10 +151,6 @@ class NuScenesDataset(Dataset):
         """Return the processed directory."""
         return str(pathlib.Path(self.data_root) / f"processed_{self.mode}")
 
-    @property
-    def num_classes(self):
-        """Return the number of classes in the dataset."""
-        return self.num_class
 
     def len(self):
         """Return the number of samples in the dataset under mode train, val or test."""
@@ -201,16 +204,21 @@ class NuScenesDataset(Dataset):
             # create torch geometric data from points
             data = Data(
                 x=torch.from_numpy(points.points[3:,].T).float(),  # features
-                pos=torch.from_numpy(points.points[:3, :].T).float(),  # position
+                pos=torch.from_numpy(
+                    points.points[:3, :].T
+                ).float(),  # position
                 gt_boxes=gt_boxes,  # custom keyword attribute
                 sensor_loc=torch.from_numpy(sensor_loc).float(),
             )
-
+            data = self.graph_gen_fcn(data)
             # save to disk
             torch.save(data, processed_dir / fn)
 
         for i, (sample_token, fn) in enumerate(
-            tqdm(zip(self.sample_tokens, self.processed_file_names), total=self.len())
+            tqdm(
+                zip(self.sample_tokens, self.processed_file_names),
+                total=self.len(),
+            )
         ):
             _process(sample_token, fn)
 
@@ -232,17 +240,19 @@ class NuScenesDataset(Dataset):
             data = self.augmentations(data)
 
         # compute localization regression target
-        reg_xyz, reg_lwh, reg_r, positive_mask, obj_cls_label = (
+        positive_mask, obj_cls_label, reg_xyz, reg_lwh, reg_r,  = (
             self._compute_loc_regression_target(data.gt_boxes, data.pos)
         )
-        data.reg_xyz = reg_xyz
-        data.reg_lwh = reg_lwh
-        data.reg_r = reg_r
-        data.positive_mask = positive_mask
-        data.obj_cls_label = obj_cls_label
-
+        data.target = {
+            "background": positive_mask.to(torch.int64),
+            "object": obj_cls_label,
+            "localization": reg_xyz,
+            "box_size": reg_lwh,
+            "orientation": reg_r,
+        }
+        data.mask = positive_mask
         # build graph
-        data = self.graph_gen_fcn(data)
+        # data = self.graph_gen_fcn(data)
         data = data.to(self.device)
         return data
 
@@ -370,7 +380,9 @@ class NuScenesDataset(Dataset):
         return sample_tokens_by_scene
 
     def _split_train_val_test(
-        self, train_val_test_split: Tuple[float] = (0.8, 0.1, 0.1), seed: int = 0
+        self,
+        train_val_test_split: Tuple[float] = (0.8, 0.1, 0.1),
+        seed: int = 0,
     ) -> Tuple[List[str]]:
         """Split the dataset into training and validation set.
 
@@ -390,7 +402,9 @@ class NuScenesDataset(Dataset):
             # stratified split
             # shuffle index
             n_samples = len(tokens)
-            split_ind = (np.cumsum(train_val_test_split) * n_samples).astype(int)
+            split_ind = (np.cumsum(train_val_test_split) * n_samples).astype(
+                int
+            )
             np.random.seed(seed)
             ind = np.random.permutation(n_samples)
             ind_train = ind[: split_ind[0]]
@@ -425,7 +439,10 @@ class NuScenesDataset(Dataset):
         ...
 
     def _get_gt_boxes_from_sample(
-        self, sample_token: str = "", sample: Union[dict, None] = None, render=False
+        self,
+        sample_token: str = "",
+        sample: Union[dict, None] = None,
+        render=False,
     ) -> List[BoundingBox3D]:
         """Get the ground truth bounding boxes in a sample.
 
@@ -435,7 +452,11 @@ class NuScenesDataset(Dataset):
         Returns:
             list: list of bounding box dictionaries
         """
-        sample = sample if sample is not None else self.nusc.get("sample", sample_token)
+        sample = (
+            sample
+            if sample is not None
+            else self.nusc.get("sample", sample_token)
+        )
 
         annotations = sample["anns"]
         _, boxes, _ = self.nusc.get_sample_data(
@@ -531,7 +552,11 @@ class NuScenesDataset(Dataset):
             LidarPointCloud: lidar points
             np.ndarray: sensor location relative to the car
         """
-        sample = sample if sample is not None else self.nusc.get("sample", sample_token)
+        sample = (
+            sample
+            if sample is not None
+            else self.nusc.get("sample", sample_token)
+        )
         sample_data = self.nusc.get("sample_data", sample["data"][sensor])
 
         pc = self._get_raw_lidar_pts(sample)
@@ -587,4 +612,16 @@ class NuScenesDataset(Dataset):
             pos=pos,
         )
 
-        return reg_xyz, reg_lwh, reg_r, positive_mask, obj_cls_label
+        positive_mask = positive_mask.to(self.device)
+        obj_cls_label = obj_cls_label.to(self.device)
+        reg_xyz = reg_xyz.to(self.device)
+        reg_lwh = reg_lwh.to(self.device)
+        reg_r = reg_r.to(self.device)
+
+        return (
+            positive_mask,
+            obj_cls_label,
+            reg_xyz,
+            reg_lwh,
+            reg_r,
+        )
