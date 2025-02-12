@@ -1,18 +1,21 @@
 import sys
 
 import torch
+import torch_geometric
 
 
 class ModuleRegistry:
     """Register all module classes."""
 
     REGISTRY = {}
+    TORCH_REGISTRY = {"torch_gcn_conv": torch_geometric.nn.GCNConv}
 
     @classmethod
     def register(cls, subclass_name):
         def decorator(subclass):
             if subclass_name in cls.REGISTRY:
                 raise Warning(f"Overwriting {subclass_name}")
+            print(f"Registering {subclass_name}")
             cls.REGISTRY[subclass_name] = subclass
             return subclass
 
@@ -20,10 +23,16 @@ class ModuleRegistry:
 
     @classmethod
     def build(cls, subclass_name, module_name=None, **kwargs):
-        if subclass_name not in cls.REGISTRY:
+        if (
+            subclass_name not in cls.REGISTRY
+            and subclass_name not in cls.TORCH_REGISTRY
+        ):
             raise ValueError(f"Unknown class {subclass_name}")
         module_name = module_name if module_name is not None else subclass_name
-        return cls.REGISTRY[subclass_name](name=module_name, **kwargs)
+        if subclass_name in cls.REGISTRY:
+            return cls.REGISTRY[subclass_name](name=module_name, **kwargs)
+        else:
+            return cls.TORCH_REGISTRY[subclass_name](**kwargs)
 
 
 class Module:
