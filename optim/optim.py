@@ -51,15 +51,17 @@ def loop_through_dataset(
 
     result = {}
 
+    if mode == "train":
+        model.train()
+    else:
+        model.eval()
+
     for idata, data in enumerate(pbar):
 
         data: Data
 
         if mode == "train":
-            model.train()
-            optimizer.zero_grad(set_to_none=True)
-        else:
-            model.eval()
+            optimizer.zero_grad()
 
         pred = model(data.x, data.pos, data.edge_index)
         loss_out = loss(
@@ -67,19 +69,27 @@ def loop_through_dataset(
         )
         target_loss = loss_out[target_loss_name]
 
-        # if mode == "train":
-        #     try:
-        #         target_loss.backward()
-        #     except RuntimeError as e:  # handle out of memory error
-        #         if "out of memory" in str(e) and not raise_oom:
-        #             logger.info("| WARNING: ran out of memory, skipping batch")
-        #             for p in model.parameters():
-        #                 if p.grad is not None:
-        #                     del p.grad  # free some memory
-        #             torch.cuda.empty_cache()
-        #         else:
-        #             raise e
-        #     optimizer.step()
+        if mode == "train":
+            # try:
+            #     target_loss.backward()
+            # except RuntimeError as e:  # handle out of memory error
+            #     if "out of memory" in str(e) and not raise_oom:
+            #         logger.info("| WARNING: ran out of memory, skipping batch")
+            #         for p in model.parameters():
+            #             if p.grad is not None:
+            #                 del p.grad  # free some memory
+            #         torch.cuda.empty_cache()
+            #     else:
+            #         raise e
+            target_loss.backward()
+            optimizer.step()
+
+            # print the mean gradient of all parameters
+            # for m in model.named_modules():
+            #     logger.info(f"{m[0]},{m[1].__class__.__name__}")
+            #     for p in m[1].parameters():
+            #         if p.grad is not None:
+            #             logger.info(f"mean grad {p.grad.mean():.6f}")
 
         # append the loss values to the result dictionary
         post_fix = {}

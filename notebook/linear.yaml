@@ -1,0 +1,19 @@
+modules:
+    - name: entry
+      inp_src:
+        - &x args:0 # x
+    - name: linear
+      cls: mlp
+      inp_src:
+        - *x
+      config:
+        inp_dim: 1
+        hidden_dim_lst: []
+        out_dim: 1
+        out_varname: x
+        activation: none
+        output_activation: none
+        add_batch_norm: false
+    - name: exit
+      inp_src:
+        x: linear:x

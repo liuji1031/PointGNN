@@ -1,0 +1,1 @@
+python3 scripts/train.py -d config/dataset_wsl.yaml -m config/model.yaml -t config/train.yaml

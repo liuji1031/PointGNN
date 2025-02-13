@@ -1,6 +1,6 @@
 import torch
 
-from model.registry import NNModule, ModuleRegistry, Entry
+from model.registry import NNModule, ModuleRegistry
 from loguru import logger
 
 def unpack_result(pred_dict, target_dict, unpack_sequence, mask=None):
@@ -29,26 +29,6 @@ def unpack_result(pred_dict, target_dict, unpack_sequence, mask=None):
             )
 
     return args
-
-
-@ModuleRegistry.register("entry_loss")
-class EntryLoss(Entry):
-    """Entry point module for loss calculation."""
-
-    def __init__(self, **kwargs):
-        """Unpack input"""
-        super().__init__(**kwargs)
-
-    def __call__(self, pred: dict, target: dict, mask):
-        out = []
-        # pair the predictions and targets by the key specified in self.out_varname
-        for name in self.out_varname:
-            if name in pred and name in target:
-                out.append(pred[name], target[name])
-            elif name == "mask":  # mask is a special case
-                out.append(mask)
-
-        return super().__call__(*out)
 
 
 @ModuleRegistry.register("huber_loss")
@@ -83,7 +63,7 @@ class HuberLoss(NNModule):
         else:
             loss = self.loss(pred, target)
 
-        return self._construct_result(loss)
+        return loss
 
 
 @ModuleRegistry.register("nll_loss")
@@ -126,7 +106,40 @@ class NLLLoss(NNModule):
             loss = torch.mean(self.loss(pred[mask,:], target[mask]))
         else:
             loss = self.loss(pred, target)
-        return self._construct_result(loss)
+        return loss
+    
+@ModuleRegistry.register("smooth_l1_loss")
+class SmoothL1Loss(NNModule):
+    def __init__(self, reduction="mean",beta=1.0, **kwargs):
+        """_summary_
+
+        Args:
+            kwargs: _description_
+        """
+        super().__init__(**kwargs)
+        self.reduction = reduction
+        if reduction == "custom":
+            self.loss = torch.nn.SmoothL1Loss(reduction="none", beta=beta)
+        elif reduction in ["mean", "sum", "none"]:
+            self.loss = torch.nn.SmoothL1Loss(reduction=reduction, beta=beta)
+        else:
+            raise ValueError(f"Reduction {reduction} not supported")
+        
+    def forward(self, pred, target, mask=None):
+        """_summary_
+
+        Args:
+            pred (_type_): _description_
+            target (_type_): _description_
+
+        Returns:
+            _type_: _description_
+        """
+        if self.reduction == "custom":
+            loss = torch.mean(self.loss(pred[mask], target[mask]))
+        else:
+            loss = self.loss(pred, target)
+        return loss
 
 
 @ModuleRegistry.register("total_loss")
@@ -157,4 +170,4 @@ class TotalLoss(NNModule):
         for coef, loss_val in zip(self.loss_coef, args):
             total_loss += coef * loss_val
 
-        return self._construct_result(total_loss)
+        return total_loss

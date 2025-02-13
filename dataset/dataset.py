@@ -119,7 +119,6 @@ class NuScenesDataset(Dataset):
             self.anchor_boxes_tensor = torch.stack(
                 self.anchor_boxes_tensor, dim=0
             )  # n_anchor_box x 7
-            self.anchor_boxes_tensor.requires_grad = False
 
         # get an average size of the anchor boxes
         self.avg_anchor_box = self._get_average_anchor_box()
@@ -131,7 +130,7 @@ class NuScenesDataset(Dataset):
             self.preprocesses = []
 
         # gather augmentations from the registry
-        if augmentation is not None:
+        if augmentation is not None and len(augmentation) > 0:
             self.augmentations = Compose(
                 self._parse_augment_config(augmentation)
             )
@@ -236,7 +235,7 @@ class NuScenesDataset(Dataset):
         )
 
         # do augmentations on the data
-        if self.augmentations is not None:
+        if self.mode == "train" and self.augmentations is not None:
             data = self.augmentations(data)
 
         # compute localization regression target

@@ -1,6 +1,8 @@
 from model.combine import Combine
 from model.model import ComposableModel
 from model.gnn import PointGnnLayer, PointNetEncoder
+from model.gcn import GCN
+from model.point_net import PointNet
 from model.head import (
     BackgroundClassHead,
     BoxSizeHead,
@@ -9,7 +11,7 @@ from model.head import (
     OrientationHead,
 )
 from model.mlp import Mlp
-from model.registry import ModuleRegistry
+from model.registry import ModuleRegistry, NNModule
 from model.loss import HuberLoss, NLLLoss, unpack_result
 
 __all__ = [
@@ -27,4 +29,7 @@ __all__ = [
     "HuberLoss",
     "NLLLoss",
     "unpack_result",
+    "NNModule",
+    "GCN",
+    "PointNet",
 ]

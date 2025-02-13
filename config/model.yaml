@@ -3,165 +3,175 @@ model:
   module_default: # stores anchors for repeated use
     point_feat_dim: &point_feat_dim 256
     edge_feat_dim: &edge_feat_dim 256
+    default_activation: &default_activation relu
     point_gnn_default: &point_gnn_default
       mlp_h:
         inp_dim: *point_feat_dim
-        hidden_dim_lst: [64,16]
+        hidden_dim_lst: [64]
         out_dim: 3 # has to be 3 for delta pos
         activation: relu
         output_activation: none
-        add_batch_norm: true
+        norm: batch_norm
       mlp_f:
         inp_dim : *point_feat_dim # dim of 3 for pos offset is added in the model init
-        hidden_dim_lst : [256]
-        out_dim : *edge_feat_dim
+        hidden_dim_lst : [64]
+        out_dim : *point_feat_dim
         activation : relu
-        output_activation : none
-        add_batch_norm : true
+        output_activation : relu
+        norm: batch_norm
       mlp_g:
-        inp_dim: *edge_feat_dim
-        hidden_dim_lst: [256]
+        inp_dim: *point_feat_dim
+        hidden_dim_lst: [64]
         out_dim: *point_feat_dim
         activation: relu
-        output_activation: none
-        add_batch_norm: true
+        output_activation: relu
+        norm: batch_norm
+      add_bn: true
+
+  #=============== modules =================#    
   modules:
     - name: entry
       inp_src:
         - &x args:0 # x
         - &pos args:1 # pos
         - &edge_index args:2 # edge_index
+
     - name: point_net_encoder
       cls: point_net_encoder
       inp_src:
         - *x
-        - *pos 
+        - *pos # pos after normalization
         - *edge_index
+      out_num: 1
       config:
-        out_varname: x
         local_nn: # mlp
           inp_dim: 1 # initial lidar feature dim (reflectance) is 1. dim of 3 for pos is added in the model init
-          hidden_dim_lst: [4,16,64]
-          out_dim: &local_nn_dout 256
+          hidden_dim_lst: [4]
+          out_dim: &local_nn_dout 16
           activation: relu
-          output_activation: none
-          add_batch_norm: True
+          output_activation: relu
+          norm: batch_norm
         global_nn: # mlp
           inp_dim: *local_nn_dout
-          hidden_dim_lst: [256,256]
+          hidden_dim_lst: [16,64]
           out_dim: *point_feat_dim
           activation: relu
-          output_activation: none
-          add_batch_norm: True
-    - name: point_gnn_l1
-      cls: point_gnn_layer
-      inp_src: 
-        - point_net_encoder:x
-        - *pos
-        - *edge_index
-      config:
-        out_varname: x
-        <<: *point_gnn_default
-    - name: point_gnn_l2
-      cls: point_gnn_layer
-      inp_src: 
-        - point_gnn_l1:x
-        - *pos
-        - *edge_index
-      config: 
-        out_varname: x
-        <<: *point_gnn_default
-    - name: point_gnn_l3
-      cls: point_gnn_layer
-      inp_src: 
-        - point_gnn_l2:x
-        - *pos
-        - *edge_index
-      config: 
-        out_varname: x
-        <<: *point_gnn_default
-    - name: shared_mlp
-      cls: mlp
+          output_activation: relu
+          norm: batch_norm
+
+    - name: encoder_batch_norm
+      cls: batch_norm_1d
       inp_src:
-        - point_gnn_l3:x
+        - point_net_encoder
+      out_num: 1
       config:
-        out_varname: x
-        inp_dim: *point_feat_dim
-        hidden_dim_lst: [256,256]
-        out_dim: &shared_dout 256
-        activation: relu
-        output_activation: relu
-        add_batch_norm: true
+        num_features: *point_feat_dim
+
+    # - name: point_gnn_l1
+    #   cls: point_gnn_layer
+    #   inp_src: 
+    #     - encoder_batch_norm
+    #     - *pos
+    #     - *edge_index
+    #   out_num: 1
+    #   config:
+    #     <<: *point_gnn_default
+
+    # - name: point_gnn_l2
+    #   cls: point_gnn_layer
+    #   inp_src: 
+    #     - point_gnn_l1
+    #     - *pos
+    #     - *edge_index
+    #   out_num: 1
+    #   config: 
+    #     <<: *point_gnn_default
+  
+    # - name: point_gnn_l3
+    #   cls: point_gnn_layer
+    #   inp_src: 
+    #     - point_gnn_l2
+    #     - *pos
+    #     - *edge_index
+    #   out_num: 1
+    #   config: 
+    #     <<: *point_gnn_default
+  
     - name: background_class_head
       cls: background_class_head
       inp_src:
-        - shared_mlp:x
+        - encoder_batch_norm
       config:
-        out_varname: x
-        inp_dim: *shared_dout
-        hidden_dim_lst: [128,64]
+        inp_dim: *point_feat_dim
+        hidden_dim_lst: [64,32]
         out_dim: 2
-        activation: relu
+        activation: *default_activation
         output_activation: none
-        add_batch_norm: True
+        norm: batch_norm
         output_format: log_softmax
+
     - name: object_class_head
       cls: object_class_head
       inp_src:
-        - shared_mlp:x
+        - encoder_batch_norm
       config:
-        out_varname: x
-        inp_dim: *shared_dout
-        hidden_dim_lst: [128,64]
+        inp_dim: *point_feat_dim
+        hidden_dim_lst: [64,32]
         out_dim: 7 # num of classes [car, truck, bus, construction, bicycle, motorcycle, trailor]
-        activation: relu
+        activation: *default_activation
         output_activation: none
-        add_batch_norm: True
+        norm: batch_norm
         output_format: log_softmax
+
     - name: box_size_head
       cls: box_size_head
       inp_src:
-        - shared_mlp:x
+        - encoder_batch_norm
       config:
-        out_varname: x
-        inp_dim: *shared_dout
-        hidden_dim_lst: [128,64]
+        inp_dim: *point_feat_dim
+        hidden_dim_lst: [64]
         out_dim: 3
-        activation: relu
+        activation: *default_activation
         output_activation: relu
-        add_batch_norm: True
+        norm: batch_norm
+
     - name: localization_head
       cls: localization_head
       inp_src:
-        - point_gnn_l3:x
+        - encoder_batch_norm
       config:
         out_varname: x
         inp_dim: *point_feat_dim
-        hidden_dim_lst: [256,256]
+        hidden_dim_lst: [64,32]
         out_dim: 3 # only for delta x,y,z
-        activation: relu
+        activation: *default_activation
         output_activation: none
-        add_batch_norm: True
+        norm: batch_norm
+
     - name: orientation_head
       cls: orientation_head
       inp_src:
-        - point_gnn_l3:x
+        - encoder_batch_norm
       config:
-        out_varname: x
         inp_dim: *point_feat_dim
-        hidden_dim_lst: [128,64]
+        hidden_dim_lst: [64,32]
         out_dim: 1
-        activation: relu
+        activation: *default_activation
         output_activation: none
-        add_batch_norm: True
+        norm: batch_norm
         clip_output: [-1., 1.]
+  
     - name: exit
       inp_src:
-        background: background_class_head:x
-        object: object_class_head:x
-        localization: localization_head:x
-        box_size: box_size_head:x
-        orientation: orientation_head:x
+        background: background_class_head
+        object: object_class_head
+        localization: localization_head
+        box_size: box_size_head
+        orientation: orientation_head
+        # encoder: point_net_encoder
+        # gnn_l1: point_gnn_l1
+        # gnn_l2: point_gnn_l2
+        # gnn_l3: point_gnn_l3
 
 loss:
   name: loss
@@ -186,15 +196,16 @@ loss:
         - &orientation_pred args:8
         - &orientation_target args:9
         - &mask args:10
+
     - name: background_loss
       cls: nll_loss
       inp_src:
         - *background_pred
         - *background_target
       config:
-        out_varname: loss
-        weight: [0.5, 1.0] # [background, object]
+        weight: [0.1, 1.0] # [background, object]
         reduction: mean
+
     - name: object_loss
       cls: nll_loss
       inp_src:
@@ -202,7 +213,6 @@ loss:
         - *object_target
         - *mask
       config:
-        out_varname: loss
         weight:
           - 1.0 # car
           - 1.0 # truck
@@ -212,57 +222,58 @@ loss:
           - 1.0 # motorcycle
           - 1.0 # trailor
         reduction: custom
+
     - name: localization_loss
-      cls: huber_loss
+      cls: smooth_l1_loss
       inp_src:
         - *localization_pred
         - *localization_target
         - *mask
       config:
-        out_varname: loss
-        delta: 1.0
+        beta: 1.0
         reduction: custom
+
     - name: box_size_loss
-      cls: huber_loss
+      cls: smooth_l1_loss
       inp_src:
         - *box_size_pred
         - *box_size_target
         - *mask
       config:
-        out_varname: loss
-        delta: 1.0
+        beta: 1.0
         reduction: custom
+
     - name: orientation_loss
-      cls: huber_loss
+      cls: smooth_l1_loss
       inp_src:
         - *orientation_pred
         - *orientation_target
         - *mask
       config:
-        out_varname: loss
-        delta: 1.0
+        beta: 1.0
         reduction: custom
+
     - name: total_loss
       cls: total_loss
       inp_src:
-        - background_loss:loss
-        - object_loss:loss
-        - localization_loss:loss
-        - box_size_loss:loss
-        - orientation_loss:loss
+        - background_loss
+        - object_loss
+        - localization_loss
+        - box_size_loss
+        - orientation_loss
       config:
-        out_varname: loss
         loss_coef:
           - 1.0 # background
-          - 0.5 # object
-          - 2.0 # localization
-          - 2.0 # box_size
-          - 2.0 # orientation
+          - 0 # object
+          - 0 # localization
+          - 0 # box_size
+          - 0 # orientation
+
     - name: exit
       inp_src:
-        total: "total_loss:loss"
-        background: "background_loss:loss"
-        object: "object_loss:loss"
-        localization: "localization_loss:loss"
-        box_size: "box_size_loss:loss"
-        orientation: "orientation_loss:loss"
+        total: total_loss
+        background: background_loss
+        object: object_loss
+        localization: localization_loss
+        box_size: box_size_loss
+        orientation: orientation_loss

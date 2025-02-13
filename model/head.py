@@ -26,7 +26,7 @@ class ClassificationHead(Mlp):
         elif self.output_format == "log_softmax":
             out = log_softmax(out, dim=-1)
 
-        return self._construct_result(out)
+        return out
 
 
 @ModuleRegistry.register("background_class_head")
@@ -91,5 +91,6 @@ class OrientationHead(Mlp):
 
     def forward(self, x):
         out = self.mlp(x)
-        out = torch.clip(out, self.clip_output[0], self.clip_output[1])
-        return self._construct_result(out)
+        # out = torch.clip(out, self.clip_output[0], self.clip_output[1])
+        out = torch.tanh(out)
+        return out

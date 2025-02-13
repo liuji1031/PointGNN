@@ -15,7 +15,7 @@ from torch_geometric.loader import DataLoader
 
 from dataset import DatasetRegistry
 from model import ComposableModel
-from train import Optimization, loop_through_dataset
+from optim import Optimization, loop_through_dataset
 from util import read_config
 
 app = typer.Typer(pretty_exceptions_show_locals=False)
@@ -60,6 +60,12 @@ def train(
         exists=True,
         resolve_path=True,
     ),
+    reset_optimizer: bool = typer.Option(
+        False,
+        "--reset-optimizer",
+        "-r",
+        help="Reset optimizer to initial state",
+    ),
     summary: pathlib.Path = typer.Option(
         None,
         "--summary",
@@ -78,6 +84,14 @@ def train(
     ),
 ):
     """Train the model."""
+    logger.info(f"Data configuration file: {data_cfg}")
+    logger.info(f"Model configuration file: {model_cfg}")
+    logger.info(f"Training configuration file: {train_cfg}")
+    logger.info(f"Checkpoint file: {chkpt}")
+    logger.info(f"Reset optimizer: {reset_optimizer}")
+    logger.info(f"Summary file: {summary}")
+    logger.info(f"Logging level: {log_lvl}")
+
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     logger.level(log_lvl)
     torch.set_float32_matmul_precision("high")
@@ -85,17 +99,14 @@ def train(
     # load the dataset configuration
     logger.info(f"Loading dataset configuration...")
     data_cfg = read_config(data_cfg)
-    logger.debug(f"Configuration file:\n {pformat(data_cfg)}")
 
     # load model configuration
     logger.info(f"Loading model configuration...")
     model_cfg = read_config(model_cfg)
-    logger.debug(f"Configuration file:\n {pformat(model_cfg)}")
 
     # load optimization configuration
     logger.info(f"Loading training configuration...")
     train_cfg = read_config(train_cfg)
-    logger.debug(f"Configuration file:\n {pformat(train_cfg)}")
 
     # create the dataset and loader
     ds_train = DatasetRegistry.build(
@@ -120,17 +131,17 @@ def train(
     train_loader = DataLoader(
         ds_train,
         batch_size=train_cfg.batch_size,
-        shuffle=True,
+        shuffle=train_cfg.dataloader.train.shuffle,
     )
     val_loader = DataLoader(
         ds_val,
         batch_size=train_cfg.batch_size,
-        shuffle=False,
+        shuffle=train_cfg.dataloader.val.shuffle,
     )
     test_loader = DataLoader(
         ds_test,
         batch_size=train_cfg.batch_size,
-        shuffle=False,
+        shuffle=train_cfg.dataloader.test.shuffle,
     )
 
     # load the model
@@ -138,7 +149,7 @@ def train(
     model = model.to(ds_train.device)
     loss = ComposableModel(model_cfg.loss.name, model_cfg.loss.modules)
     loss = loss.to(ds_train.device)
-    logger.info(f"Model\n {model} loaded.")
+    logger.info("Model loaded.")
 
     if train_cfg.torch_dynamo:
         model = torch._dynamo.optimize("inductor")(model)
@@ -172,19 +183,18 @@ def train(
         for key in unexpected_key:
             logger.warning(f"Unexpected key: {key}")
 
-        optimizer.load_state_dict(chkpt_state["optimizer"])
-        scheduler.load_state_dict(chkpt_state["scheduler"])
+        if not reset_optimizer:
+            optimizer.load_state_dict(chkpt_state["optimizer"])
+            scheduler.load_state_dict(chkpt_state["scheduler"])
 
         start_epoch = chkpt_state["epoch"] + 1
         logger.info(
             f"Checkpoint {chkpt} loaded. Starting from epoch {start_epoch}"
         )
-        # get parent dir of chkpt
-        chkpt = chkpt.parent
-    else:
-        # create checkpoint directory
-        chkpt = pathlib.Path(train_cfg.logging_dir) / timestamp / "chkpt"
-        chkpt.mkdir(parents=True, exist_ok=True)
+
+    # create checkpoint directory for the current timestamp
+    chkpt = pathlib.Path(train_cfg.logging_dir) / timestamp / "chkpt"
+    chkpt.mkdir(parents=True, exist_ok=True)
 
     # create summary directory
     if summary:
@@ -215,22 +225,26 @@ def train(
             target_loss_name=train_cfg.target_loss_name,
         )
 
-        result_val = loop_through_dataset(
-            epoch,
-            val_loader,
-            model,
-            loss,
-            optimizer,
-            scheduler,
-            mode="val",
-            result_unpack_sequence=model_cfg.loss.unpack_sequence,
-            device=ds_val.device,
-            target_loss_name=train_cfg.target_loss_name,
-        )
+        with torch.no_grad():
+            result_val = loop_through_dataset(
+                epoch,
+                val_loader,
+                model,
+                loss,
+                optimizer,
+                scheduler,
+                mode="val",
+                result_unpack_sequence=model_cfg.loss.unpack_sequence,
+                device=ds_val.device,
+                target_loss_name=train_cfg.target_loss_name,
+            )
 
         # update summary writer
-        writer.add_scalars("train", result_train, epoch)
-        writer.add_scalars("val", result_val, epoch)
+        for key, train_value in result_train.items():
+            val_value = result_val[key]
+            writer.add_scalars(
+                key, {"train": train_value, "val": val_value}, epoch
+            )
         writer.add_scalar(
             "learning_rate", optimizer.param_groups[0]["lr"], epoch
         )

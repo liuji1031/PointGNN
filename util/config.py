@@ -4,7 +4,7 @@ import pathlib
 from easydict import EasyDict as edict
 from model import ComposableModel
 from dataset import DatasetRegistry
-
+from pprint import pprint
 
 def read_config(path: str | pathlib.Path) -> edict:
     """read a yaml file and return a dictionary
@@ -24,7 +24,7 @@ def camel_to_snake(name):
     return re.sub("([a-z0-9])([A-Z])", r"\1_\2", s1).lower()
 
 
-def build_model(config_file: str):
+def build_model(config_file: str, verbose=False):
     """Build full model based on config file.
 
     Args:
@@ -33,6 +33,8 @@ def build_model(config_file: str):
         torch.nn.Module: the model
     """
     config = read_config(config_file)
+    if verbose:
+        pprint(config)
     assert "model" in config, "Model configuration not found in the config file"
     model = ComposableModel(
         config.model.get("name", "model"), config.model.modules

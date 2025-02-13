@@ -14,11 +14,13 @@ class ComposableModel(torch.nn.Module):
         self.name = model_name
         self._module_info = {}
         self._inp_num = {}
+        self._out_num = {}
         self._module_output = {}
         self._des = {}
+        self._return_dict = False
         self._build(config)
         self._op_seq = self._forward_dry_run()
-
+        
     def _build(self, config_list: List):
         """Build the model based on config file.
 
@@ -45,11 +47,25 @@ class ComposableModel(torch.nn.Module):
                 cls_name, module_name, **module_config["config"]
             )
             self.register_module(module_name, module)
+        if isinstance(module_config["inp_src"], list):
+            for isrc, src in enumerate(module_config["inp_src"]):
+                parsed_src = src.split(":")
+                if len(parsed_src) == 1: 
+                    # positional argument number not specified, assume it is 0
+                    module_config["inp_src"][isrc] = f"{src}:0"
+        elif isinstance(module_config["inp_src"], dict):
+            for des, src in module_config["inp_src"].items():
+                parsed_src = src.split(":")
+                if len(parsed_src) == 1: 
+                    # positional argument number not specified, assume it is 0
+                    module_config["inp_src"][des] = f"{src}:0"
 
         self._module_info[module_name]["inp_src"] = module_config[
             "inp_src"
         ]  # inp_src is a list
+
         self._inp_num[module_name] = len(module_config["inp_src"])
+        self._out_num[module_name] = module_config.get("out_num", 1)
 
         if module_name not in ["entry", "exit"]:
             for iarg, src in enumerate(module_config["inp_src"]):
@@ -57,6 +73,9 @@ class ComposableModel(torch.nn.Module):
                 if src not in self._des:
                     self._des[src] = []
                 self._des[src].append(f"{module_name}:{iarg}")
+
+        if module_name == "exit" and isinstance(module_config["inp_src"], dict):
+            self._return_dict = True
 
     def _forward_dry_run(self):
         """Figure out the sequence of operations by simulating forward pass."""
@@ -76,8 +95,11 @@ class ComposableModel(torch.nn.Module):
                 n_input = self._inp_num[module_name]
                 out_varname = [f"args:{i}" for i in range(n_input)]
             else:
-                out_varname = self._modules[module_name].out_varname
-                out_varname = [f"{module_name}:{out_varname}"]
+                for i in range(self._out_num[module_name]):
+                    if i == 0:
+                        out_varname = [f"{module_name}:{i}"]
+                    else:
+                        out_varname.append(f"{module_name}:{i}")
 
             for varname in out_varname:
                 if varname not in self._des:
@@ -111,7 +133,7 @@ class ComposableModel(torch.nn.Module):
         module_output = {}
         for iarg, arg in enumerate(args):
             module_output[f"args:{iarg}"] = arg
-        final_output = {}
+        
 
         for module_name in self._op_seq:
             # construct input dictionary for the module
@@ -126,10 +148,32 @@ class ComposableModel(torch.nn.Module):
             except Exception as e:
                 logger.error(f"Error in module {module_name}: {e}")
                 raise e
-            module_output = {**module_output, **out}
 
-        for des, src in self._module_info["exit"][
-            "inp_src"
-        ].items():  # inp_src of exit is a dict
-            final_output[des] = module_output[src]
-        return final_output
+            # out is either a single tensor or a tuple of tensors
+            if not isinstance(out, tuple):
+                out = (out,)
+
+            # out_dict = {}
+            # for iout, out_val in enumerate(out):
+            #     out_dict[f"{module_name}:{iout}"] = out_val
+
+            # module_output = {**module_output, **out_dict}
+
+            for iout, out_val in enumerate(out):
+                module_output[f"{module_name}:{iout}"] = out_val
+
+        if self._return_dict:
+            final_output = {}
+            for des, src in self._module_info["exit"][
+                "inp_src"
+            ].items():  # inp_src of exit is a dict
+                final_output[des] = module_output[src]
+            return final_output
+        else:
+            final_output = []
+            for src in self._module_info["exit"]["inp_src"]:
+                final_output.append(module_output[src])
+            if len(final_output) == 1:
+                return final_output[0]
+            else:
+                return tuple(final_output)

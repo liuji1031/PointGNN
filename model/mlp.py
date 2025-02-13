@@ -17,6 +17,8 @@ class Mlp(NNModule):
     ACTIVATION_DICT = {
         "relu": torch.nn.ReLU,
         "tanh": torch.nn.Tanh,
+        "elu": torch.nn.ELU,
+        "leaky_relu": torch.nn.LeakyReLU,
         "none": torch.nn.Identity,
     }
 
@@ -27,7 +29,7 @@ class Mlp(NNModule):
         out_dim: int,
         activation: str = "relu",
         output_activation: str = "none",
-        add_batch_norm: bool = False,
+        norm: str = "none",
         **kwargs,
     ):
         """_summary_
@@ -39,16 +41,22 @@ class Mlp(NNModule):
             layers. defaults to "relu".
             output_activation (str, optional): activation function of the output
             layer. defaults to "none".
-            add_batch_norm (bool, optional): whether to add batch normalization
+            norm (str, optional): normalization layer. defaults to "none". other options
+            include "batch_norm" and "layer_norm".
             return_dict (bool, optional): whether to return the output as a dict
         """
         super().__init__(**kwargs)
+        self.inp_dim = inp_dim
+        self.hidden_dim_lst = hidden_dim_lst
+        self.out_dim = out_dim
         layers = []
         in_dims = [inp_dim] + hidden_dim_lst
         out_dims = hidden_dim_lst + [out_dim]
         n_layers = len(in_dims)
         for i in range(n_layers):
-            layers.append(Linear(in_dims[i], out_dims[i]))
+            lin_layer = Linear(in_dims[i], out_dims[i])
+            layers.append(lin_layer)
+
             if i < n_layers - 1:
                 if activation != "none":
                     layers.append(self.ACTIVATION_DICT[activation]())
@@ -56,10 +64,12 @@ class Mlp(NNModule):
                 if output_activation != "none":
                     layers.append(self.ACTIVATION_DICT[output_activation]())
 
-            if add_batch_norm:
+            if norm == "batch_norm":
                 layers.append(torch.nn.BatchNorm1d(out_dims[i]))
+            elif norm == "layer_norm":
+                layers.append(torch.nn.LayerNorm(out_dims[i]))
 
         self.mlp = torch.nn.Sequential(*layers)
 
     def forward(self, x):
-        return self._construct_result(self.mlp(x))
+        return self.mlp(x)

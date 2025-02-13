@@ -1,0 +1,16 @@
+modules:
+  - name: entry
+    inp_src:
+      - &pos args:0
+      - &batch args:1
+  - name: point_net
+    cls: point_net
+    inp_src:
+      - *pos
+      - *batch
+    config:
+      out_varname: x
+      num_classes: 40
+  - name: exit
+    inp_src:
+      x: point_net:x

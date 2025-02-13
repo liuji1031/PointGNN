@@ -1,0 +1,38 @@
+model:
+  modules:
+    - name: entry
+      inp_src:
+        - &x args:0
+        - &pos args:1
+        - &edge_index args:2
+    - name: point_gnn
+      cls: point_gnn_layer
+      inp_src:
+        - *x
+        - *pos
+        - *edge_index
+      config:
+        mlp_h:
+          inp_dim: 4
+          hidden_dim_lst: []
+          out_dim: 3 # has to be 3 for delta pos
+          activation: relu
+          output_activation: relu
+          norm: batch_norm
+        mlp_f:
+          inp_dim: 4
+          hidden_dim_lst: []
+          out_dim: 4
+          activation: relu
+          output_activation: relu
+          norm: batch_norm
+        mlp_g:
+          inp_dim: 4
+          hidden_dim_lst: []
+          out_dim: 4
+          activation: relu
+          output_activation: relu
+          norm: batch_norm
+    - name: exit
+      inp_src:
+        - point_gnn:0

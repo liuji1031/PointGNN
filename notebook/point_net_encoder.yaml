@@ -1,0 +1,94 @@
+point_feat_dim: &point_feat_dim 128
+point_gnn_default: &point_gnn_default
+  mlp_h:
+    inp_dim: *point_feat_dim
+    hidden_dim_lst: [64]
+    out_dim: 3 # has to be 3 for delta pos
+    activation: relu
+    output_activation: none
+    norm: batch_norm
+  mlp_f:
+    inp_dim : *point_feat_dim # dim of 3 for pos offset is added in the model init
+    hidden_dim_lst : [64]
+    out_dim : *point_feat_dim
+    activation : relu
+    output_activation : relu
+    norm: batch_norm
+  mlp_g:
+    inp_dim: *point_feat_dim
+    hidden_dim_lst: [64]
+    out_dim: *point_feat_dim
+    activation: relu
+    output_activation: relu
+    norm: batch_norm
+  add_bn: true
+
+model:
+  modules:
+    - name: entry
+      inp_src:
+        - &x args:0 # x
+        - &pos args:1 # pos
+        - &edge_index args:2 # edge_index
+    - name: point_net_encoder
+      cls: point_net_encoder
+      inp_src:
+        - *x
+        - *pos
+        - *edge_index
+      out_num: 1
+      config:
+        local_nn: # mlp
+          inp_dim: 1 # initial lidar feature dim (reflectance) is 1. dim of 3 for pos is added in the model init
+          hidden_dim_lst: [4]
+          out_dim: &local_nn_dout 16
+          activation: relu
+          output_activation: relu
+          norm: batch_norm
+        global_nn: # mlp
+          inp_dim: *local_nn_dout
+          hidden_dim_lst: [16,64]
+          out_dim: *point_feat_dim
+          activation: relu
+          output_activation: relu
+          norm: batch_norm
+    - name: batch_norm_encoder
+      cls: batch_norm_1d
+      inp_src:
+        - point_net_encoder
+      out_num: 1
+      config:
+        num_features: *point_feat_dim
+    - name: point_gnn_l1
+      cls: point_gnn_layer
+      inp_src: 
+        - batch_norm_encoder
+        - *pos
+        - *edge_index
+      out_num: 1
+      config:
+        <<: *point_gnn_default
+    - name: point_gnn_l2
+      cls: point_gnn_layer
+      inp_src: 
+        - point_gnn_l1
+        - *pos
+        - *edge_index
+      out_num: 1
+      config: 
+        <<: *point_gnn_default
+    - name: point_gnn_l3
+      cls: point_gnn_layer
+      inp_src: 
+        - point_gnn_l2
+        - *pos
+        - *edge_index
+      out_num: 1
+      config: 
+        <<: *point_gnn_default
+    - name: exit
+      inp_src:
+        - point_net_encoder
+        - point_gnn_l1
+        - point_gnn_l2
+        - point_gnn_l3

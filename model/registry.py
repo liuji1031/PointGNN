@@ -8,14 +8,14 @@ class ModuleRegistry:
     """Register all module classes."""
 
     REGISTRY = {}
-    TORCH_REGISTRY = {"torch_gcn_conv": torch_geometric.nn.GCNConv}
+    TORCH_REGISTRY = {"torch_gcn_conv": torch_geometric.nn.GCNConv,
+                      "batch_norm_1d": torch.nn.BatchNorm1d,}
 
     @classmethod
     def register(cls, subclass_name):
         def decorator(subclass):
             if subclass_name in cls.REGISTRY:
                 raise Warning(f"Overwriting {subclass_name}")
-            print(f"Registering {subclass_name}")
             cls.REGISTRY[subclass_name] = subclass
             return subclass
 
@@ -41,14 +41,10 @@ class Module:
     def __init__(
         self,
         name="module",
-        out_varname=None | str | list[str],
-        prefix_module_name=True,
         **kwargs,
     ):
         super().__init__()
         self.name = name
-        self.out_varname = out_varname
-        self.prefix_module_name = prefix_module_name
 
 
 class NNModule(Module, torch.nn.Module):
@@ -56,54 +52,3 @@ class NNModule(Module, torch.nn.Module):
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        out_varname = kwargs.get("out_varname", None)
-        if out_varname is not None:
-            self.return_dict = True
-            assert isinstance(out_varname, str), (
-                f"out_varname must be a string for {self._get_name()}"
-            )
-        else:
-            self.return_dict = False
-
-    def _construct_result(self, result):
-        if not self.return_dict:
-            return result
-        else:
-            # return as a dictionary otherwise
-            return {f"{self.name}:{self.out_varname}": result}
-
-
-@ModuleRegistry.register("entry")
-class Entry(Module):
-    """Entry point module."""
-
-    def __init__(self, out_varname: list, **kwargs):
-        super().__init__(**kwargs)
-        assert isinstance(out_varname, list), (
-            f"out_varname must be a list for {self._get_name()}"
-        )
-        self.out_varname = out_varname
-
-    def __call__(self, *args):
-        out = {}
-        assert len(args) == len(self.out_varname), (
-            "Number of arguments does not match number of input variables"
-        )
-        for varname, arg in zip(self.out_varname, args):
-            if self.prefix_module_name:
-                key = f"{self.name}:{varname}"
-            else:
-                key = varname
-            out[key] = arg
-
-        return out
-
-
-@ModuleRegistry.register("exit")
-class Exit(Entry):
-    """Exit point module.
-
-    Behaves the same as Entry module.
-    """
-
-    ...

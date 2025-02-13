@@ -34,6 +34,7 @@ class PointGnnLayer(NNModule):
         mlp_h: dict,
         mlp_f: dict,
         mlp_g: dict,
+        add_bn: bool = False,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -46,11 +47,18 @@ class PointGnnLayer(NNModule):
         self.mlph = MlpH(**mlp_h)
         self.mlpf = MlpF(**mlp_f)
         self.mlpg = MlpG(**mlp_g)
-
         self.conv = PointGNNConv(self.mlph, self.mlpf, self.mlpg)
 
+        if add_bn:
+            self.bn = torch.nn.BatchNorm1d(mlp_g["out_dim"])
+        else:
+            self.bn = None
+
     def forward(self, x, pos, edge_index):
-        return self._construct_result(self.conv(x, pos, edge_index))
+        x = self.conv(x, pos, edge_index)
+        if self.bn is not None:
+            x = self.bn(x)
+        return x
 
 
 class GNN(torch.nn.Module):
@@ -74,8 +82,8 @@ class GNN(torch.nn.Module):
 class PointNetEncoder(NNModule):
     def __init__(
         self,
-        local_nn: dict,
-        global_nn: dict,
+        local_nn: dict | None = None,
+        global_nn: dict | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -85,9 +93,9 @@ class PointNetEncoder(NNModule):
         local_nn["inp_dim"] = (
             local_nn["inp_dim"] + 3
         )  # add 3 for the relative position features
-        self.local_nn = Mlp(**local_nn)
-        self.global_nn = Mlp(**global_nn)
+        self.local_nn = Mlp(**local_nn) if local_nn is not None else None
+        self.global_nn = Mlp(**global_nn) if global_nn is not None else None
         self.conv = PointNetConv(self.local_nn, self.global_nn)
 
     def forward(self, x, pos, edge_index):
-        return self._construct_result(self.conv(x, pos, edge_index))
+        return self.conv(x, pos, edge_index)

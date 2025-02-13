@@ -9,10 +9,10 @@ graph_gen_presets:
   - knn: &knn_graph_gen_config
       name: knn
       config:
-        k: 6
+        k: 8
         loop: false
 config:
-  data_root: /home/ji-liu/Robotics/NuScenes/NuScenes_mini
+  data_root: /mnt/c/Users/liuji/Robotics/NuScenes_mini/v1.0-mini
   version: v1.0-mini
   classes:
     - &car vehicle.car
@@ -46,16 +46,16 @@ config:
         x: 0.2
         y: 0.2
         z: 0.2
-  augmentation: []
-  # - name: random_jitter
-  #   config:
-  #     sigma: 0.01
-  # - name: random_rotation
-  #   config:
-  #     sigma: 0.3927 # pi/8
-  # - name: random_flip_y
-  #   config:
-  #     prob: 0.5
+  augmentation:
+  - name: random_jitter
+    config:
+      sigma: 0.05
+  - name: random_rotation
+    config:
+      sigma: 0.3927 # pi/8
+  - name: random_flip_y
+    config:
+      prob: 0.5
   anchor_box:
     - class: *car
       wlh: [1.9,4.6,1.7]
